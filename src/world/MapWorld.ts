@@ -11,6 +11,8 @@ import {
   buildBridges, buildContainers, buildDam, buildFarm, buildPumping, buildPylons, buildRadio, buildTown, buildVillage, buildWrecks,
 } from './POIs';
 import { Extracts } from './Extracts';
+import { buildPoi2, Extras } from './POIs2'; // W4
+import { makeShore } from './MapGen'; // W4
 import { Traversal } from './Traversal';
 import { DayNight } from './DayNight';
 import { texturesReady } from './Materials';
@@ -41,6 +43,7 @@ export class MapWorld implements GameWorld {
   private extracts!: Extracts;
   private poiGroups: { group: THREE.Object3D; center: THREE.Vector3; radius: number }[] = [];
   private timings: Record<string, number> = {};
+  private extras = new Extras(); // W4: sand drifts, lamps
 
   constructor(private scene: THREE.Scene, private physics: Physics, renderer: THREE.WebGLRenderer, private def: MapDef) {
     this.id = def.id;
@@ -117,6 +120,20 @@ export class MapWorld implements GameWorld {
     for (const [x, z, hx, hz] of [[0, -h, h, 1], [0, h, h, 1], [-h, 0, 1, h], [h, 0, 1, h]]) {
       this.physics.world.createCollider(RAPIER.ColliderDesc.cuboid(hx, 400, hz).setTranslation(x, 150, z).setCollisionGroups(groups), body);
     }
+    // W4: keep players out of deep sea — wall segments ~40 m offshore
+    if (this.def.coast) {
+      const shore = makeShore(this.def);
+      for (let z = -h; z < h; z += 20) {
+        const xa = shore(z) + 40;
+        const xb = shore(z + 20) + 40;
+        const len = Math.hypot(xb - xa, 20);
+        const rot = Math.atan2(xb - xa, 20);
+        this.physics.world.createCollider(
+          RAPIER.ColliderDesc.cuboid(1, 60, len / 2 + 0.5).setTranslation((xa + xb) / 2, 40, z + 10).setRotation({ x: 0, y: Math.sin(rot / 2), z: 0, w: Math.cos(rot / 2) }).setCollisionGroups(groups),
+          body,
+        );
+      }
+    }
   }
 
   private buildPOIs(): void {
@@ -156,6 +173,9 @@ export class MapWorld implements GameWorld {
         case 'containers':
           add((k) => buildContainers(k, poi, padY(poi.center[0], poi.center[1])), seed, c, poi.radius);
           break;
+        default: // W4: Shardcoast POIs
+          add((k) => buildPoi2(k, poi, { def, hm, gen, traversal: this.traversal, extras: this.extras, y: padY(poi.center[0], poi.center[1]) }), seed, c, poi.radius);
+          break;
       }
     }
     // Map-wide infrastructure (never distance-culled: long thin features)
@@ -166,6 +186,7 @@ export class MapWorld implements GameWorld {
     const g = infra.build(this.scene, this.physics);
     g.add(cables);
     this.poiGroups.push({ group: g, center: new THREE.Vector3(), radius: 1e6 });
+    this.extras.build(this.scene, this.physics); // W4
   }
 
   heightAt(x: number, z: number): number {
@@ -182,6 +203,7 @@ export class MapWorld implements GameWorld {
     this.foliage.update(dt, cam, dn.sun.color.clone().multiplyScalar(dn.sun.intensity * 0.35), dn.ambientColor, Math.max(0, dn.sunDir.y));
     this.water.update(dt, dn.sunDir, dn.sun.color, dn.skyColor);
     this.extracts.update(dt);
+    this.extras.update(dt); // W4
     dn.update(focus);
     for (const p of this.poiGroups) {
       p.group.visible = Math.hypot(p.center.x - cam.x, p.center.z - cam.z) - p.radius < POI_VIEW_DIST;

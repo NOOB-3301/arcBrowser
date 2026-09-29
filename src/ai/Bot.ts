@@ -5,7 +5,7 @@ import { newTargetId, type Damageable, type DamageResult, type HitZone, type Sur
 import { Perception } from './Perception';
 import type { AIContext } from './AIContext';
 
-export type BotKind = 'tick' | 'wasp' | 'sentinel' | 'raider';
+export type BotKind = 'tick' | 'wasp' | 'sentinel' | 'raider' | 'stalker' | 'colossus'; // W4: stalker, colossus
 
 /** Shared plumbing for every AI unit: health, perception, registration, disposal. */
 export abstract class Bot implements Damageable {
@@ -52,6 +52,12 @@ export abstract class Bot implements Damageable {
   /** Visual update, per render frame. */
   abstract render(dt: number): void;
   protected onDeath(): void {}
+
+  // W4: EMP stun. ARC units freeze (AIDirector skips think/fixedStep while stunT > 0); others ignore it.
+  stunT = 0;
+  stun(seconds: number): void {
+    if (this.faction === 'arc' && this.health.alive) this.stunT = Math.max(this.stunT, seconds);
+  }
 
   onDamaged(r: DamageResult): void {
     this.hitFlash = 0.08;
