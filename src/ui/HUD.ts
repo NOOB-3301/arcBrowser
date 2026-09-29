@@ -117,6 +117,7 @@ export class HUD {
         `move    ${i.moveX.toFixed(2)} ${i.moveY.toFixed(2)}\n` +
         `trig    fire ${i.fireAxis.toFixed(2)}  ads ${i.adsAxis.toFixed(2)}\n` +
         `held    ${held || '-'}\n` +
+        `key     ${i.lastKeyCode || '-'}\n` +
         `state   ${player.state} / ${player.locomotion}${player.crouched ? ' (crouched)' : ''}\n` +
         `speed   ${player.horizontalSpeed.toFixed(2)} m/s  vy ${player.velocity.y.toFixed(1)}\n` +
         `stamina ${st.value.toFixed(0)}${st.exhausted ? ' EXHAUSTED' : ''}\n` +
