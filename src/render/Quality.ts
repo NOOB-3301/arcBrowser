@@ -46,17 +46,17 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     textureDrop: 1, normalMaps: false, anisotropy: 2, envSize: 64,
   },
   medium: {
-    label: 'Medium', pixelRatio: 1, maxPixelRatio: 1, ao: true, aoQuality: 'Performance', aoHalfRes: true,
+    label: 'Medium', pixelRatio: 1, maxPixelRatio: 1, ao: false, aoQuality: 'Performance', aoHalfRes: true,
     bloom: true, bloomScale: 0.25, godRays: false, godRaySamples: 0, smaa: true, filmFx: true,
     shadowCascades: 2, shadowMapSize: 2048, shadowSplits: [30, 170], shadowRadius: 2,
-    grassRadius: 26, grassSpacing: 0.5, lodScale: 0.8, drawDistance: 2000,
+    grassRadius: 22, grassSpacing: 0.52, lodScale: 0.8, drawDistance: 2000,
     textureDrop: 1, normalMaps: true, anisotropy: 4, envSize: 128,
   },
   high: {
-    label: 'High', pixelRatio: 1, maxPixelRatio: 1.5, ao: true, aoQuality: 'Low', aoHalfRes: true,
-    bloom: true, bloomScale: 0.5, godRays: true, godRaySamples: 28, smaa: true, filmFx: true,
-    shadowCascades: 3, shadowMapSize: 2048, shadowSplits: [22, 80, 260], shadowRadius: 2.5,
-    grassRadius: 34, grassSpacing: 0.42, lodScale: 1, drawDistance: 2600,
+    label: 'High', pixelRatio: 1, maxPixelRatio: 1.25, ao: true, aoQuality: 'Performance', aoHalfRes: true,
+    bloom: true, bloomScale: 0.5, godRays: false, godRaySamples: 0, smaa: true, filmFx: true,
+    shadowCascades: 3, shadowMapSize: 2048, shadowSplits: [20, 70, 200], shadowRadius: 2.5,
+    grassRadius: 28, grassSpacing: 0.46, lodScale: 1, drawDistance: 2600,
     textureDrop: 0, normalMaps: true, anisotropy: 8, envSize: 256,
   },
   ultra: {

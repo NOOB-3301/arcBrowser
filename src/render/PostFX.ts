@@ -114,21 +114,21 @@ function makeGradeLUT(size = 32): THREE.Data3DTexture {
         let G = g / (size - 1);
         let B = b / (size - 1);
         const luma = R * 0.2126 + G * 0.7152 + B * 0.0722;
-        // desaturate a touch
-        const sat = 0.86;
+        // richer colour (ACES + env light otherwise reads greyish)
+        const sat = 1.16;
         R = luma + (R - luma) * sat;
         G = luma + (G - luma) * sat;
         B = luma + (B - luma) * sat;
         // split tone: cool slate shadows, warm dusty highlights
         const sh = 1 - smooth(0.0, 0.45, luma);
         const hi = smooth(0.45, 1.0, luma);
-        R += -0.012 * sh + 0.035 * hi;
-        G += 0.004 * sh + 0.012 * hi;
-        B += 0.018 * sh - 0.04 * hi;
+        R += -0.015 * sh + 0.04 * hi;
+        G += 0.006 * sh + 0.018 * hi;
+        B += 0.022 * sh - 0.035 * hi;
         // gentle S-curve contrast around mid grey + slight black lift (dusty air)
         const curve = (x: number) => {
-          const c = x + (x - 0.5) * 0.12 * (1 - Math.abs(2 * x - 1));
-          return 0.012 + c * 0.985;
+          const c = x + (x - 0.5) * 0.24 * (1 - Math.abs(2 * x - 1));
+          return c;
         };
         R = curve(R);
         G = curve(G);
@@ -174,7 +174,8 @@ export class PostFX {
   enabled = true;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, private camera: THREE.PerspectiveCamera) {
-    renderer.toneMapping = THREE.AgXToneMapping;
+    // ACES: punchier, more saturated than AgX (matches the sunlit reference look)
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
     this.composer = new EffectComposer(renderer, rt);
@@ -192,8 +193,44 @@ export class PostFX {
     Quality.onChange((q) => this.apply(q));
   }
 
+  /**
+   * Dynamic resolution: scale on top of the preset pixel ratio, driven by measured frame time.
+   * Drops fast when frames are slow (>18.5 ms avg), recovers slowly when there's headroom.
+   */
+  resScale = 1;
+  private frameAvg = 16;
+  private resTimer = 0;
+  private basePR = 1;
+
+  private applyPixelRatio(): void {
+    const pr = Math.max(0.5, this.basePR * this.resScale);
+    this.renderer.setPixelRatio(pr);
+    this.renderer.setSize(this.width, this.height);
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(this.width, this.height);
+  }
+
+  private adaptResolution(dt: number): void {
+    const ms = dt * 1000;
+    if (ms <= 0 || ms > 250) return; // tab switch / hitch: ignore
+    this.frameAvg += (ms - this.frameAvg) * 0.05;
+    this.resTimer += dt;
+    if (this.resTimer < 0.75) return;
+    let next = this.resScale;
+    if (this.frameAvg > 18.5) next = Math.max(0.55, this.resScale * 0.88);
+    else if (this.frameAvg < 13.5 && this.resTimer > 2.5) next = Math.min(1, this.resScale * 1.05);
+    else return;
+    this.resTimer = 0;
+    if (Math.abs(next - this.resScale) > 0.01) {
+      this.resScale = next;
+      this.applyPixelRatio();
+    }
+  }
+
   private apply(q: QualityPreset): void {
     const pr = Math.min(window.devicePixelRatio * q.pixelRatio, q.maxPixelRatio);
+    this.basePR = pr;
+    this.resScale = 1;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(this.width, this.height);
     this.composer.setPixelRatio(pr);
@@ -231,6 +268,7 @@ export class PostFX {
 
   render(dt: number): void {
     RenderGlobals.time.value += dt;
+    this.adaptResolution(dt);
     if (!this.enabled) {
       this.renderer.render(this.scene, this.camera);
       return;

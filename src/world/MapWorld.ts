@@ -206,7 +206,14 @@ export class MapWorld implements GameWorld {
     this.extras.update(dt); // W4
     dn.update(focus);
     for (const p of this.poiGroups) {
-      p.group.visible = Math.hypot(p.center.x - cam.x, p.center.z - cam.z) - p.radius < POI_VIEW_DIST;
+      const d = Math.hypot(p.center.x - cam.x, p.center.z - cam.z) - p.radius;
+      p.group.visible = d < POI_VIEW_DIST;
+      // Buildings far away don't need to cast into the (coarse) far cascades
+      const cast = d < 220;
+      if (p.group.userData.cast !== cast) {
+        p.group.userData.cast = cast;
+        p.group.traverse((o) => ((o as THREE.Mesh).isMesh ? (o.castShadow = cast) : null));
+      }
     }
   }
 

@@ -239,7 +239,12 @@ export class AIDirector {
       } else if (this.enabled && (b.focusDist < SLEEP_DIST || b.kind === 'raider')) {
         b.think(dt);
       }
-      if (b.focusDist < SLEEP_DIST + 200) (b as { render(dt: number, alpha?: number): void }).render(dt, alpha);
+      // Visual LOD: bots past the fog line aren't drawn at all, and only nearby bots cast
+      // shadows (each shadow cascade re-draws every caster). This was ~60% of all draw calls.
+      const visDist = b.kind === 'wasp' || b.kind === 'colossus' ? 520 : 300;
+      const visible = b.focusDist < visDist;
+      b.setVisualLOD(visible, b.focusDist < 45);
+      if (visible) (b as { render(dt: number, alpha?: number): void }).render(dt, alpha);
     }
   }
 

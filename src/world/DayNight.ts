@@ -38,17 +38,17 @@ interface Preset {
 
 const PRESETS: Record<TimeOfDay, Preset> = {
   morning: {
-    elevation: 13, azimuth: 110, sun: '#ffc690', sunIntensity: 3.2, turbidity: 6, rayleigh: 1.6, mie: 0.006, mieG: 0.86,
+    elevation: 13, azimuth: 110, sun: '#ffc690', sunIntensity: 4.2, turbidity: 6, rayleigh: 1.6, mie: 0.006, mieG: 0.86,
     clouds: 0.35, cloudDensity: 0.45, exposure: 1.0, env: 1.0, fogNear: 30, fogFar: 1500, fogFalloff: 0.022,
     fogTint: '#d9c2a2', fogTintAmt: 0.25, scatter: 0.6, shadow: 1, groundAlbedo: '#4a4232', skyLum: 0.5,
   },
   noon: {
-    elevation: 55, azimuth: 150, sun: '#fff0dc', sunIntensity: 3.6, turbidity: 4.5, rayleigh: 1.2, mie: 0.005, mieG: 0.82,
-    clouds: 0.38, cloudDensity: 0.5, exposure: 0.95, env: 1.0, fogNear: 60, fogFar: 2200, fogFalloff: 0.012,
-    fogTint: '#cfc4b0', fogTintAmt: 0.2, scatter: 0.45, shadow: 1, groundAlbedo: '#4d4636', skyLum: 0.6,
+    elevation: 42, azimuth: 150, sun: '#ffe6c4', sunIntensity: 4.8, turbidity: 3, rayleigh: 2.2, mie: 0.004, mieG: 0.8,
+    clouds: 0.34, cloudDensity: 0.45, exposure: 1.0, env: 0.72, fogNear: 80, fogFar: 2400, fogFalloff: 0.01,
+    fogTint: '#c9d4dc', fogTintAmt: 0.1, scatter: 0.35, shadow: 1, groundAlbedo: '#6a5a40', skyLum: 0.6,
   },
   dusk: {
-    elevation: 7, azimuth: 250, sun: '#ff9a58', sunIntensity: 2.3, turbidity: 6, rayleigh: 2.2, mie: 0.005, mieG: 0.8,
+    elevation: 7, azimuth: 250, sun: '#ff9a58', sunIntensity: 3.0, turbidity: 6, rayleigh: 2.2, mie: 0.005, mieG: 0.8,
     clouds: 0.42, cloudDensity: 0.5, exposure: 0.95, env: 1.0, fogNear: 90, fogFar: 1700, fogFalloff: 0.013,
     fogTint: '#b98a6e', fogTintAmt: 0.25, scatter: 0.5, shadow: 1, groundAlbedo: '#3d3228', skyLum: 0.32,
   },

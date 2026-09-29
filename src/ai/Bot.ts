@@ -75,6 +75,26 @@ export abstract class Bot implements Damageable {
     for (let i = 0; i < b.numColliders(); i++) b.collider(i).setEnabled(false);
   }
 
+  private lodVisible = true;
+  private lodShadows = true;
+
+  /** Root objects that make up this bot's visuals (raiders override: animator root). */
+  protected visualRoots(): THREE.Object3D[] {
+    return [this.group];
+  }
+
+  /** Distance-based visibility + shadow casting. Cheap: only traverses on state change. */
+  setVisualLOD(visible: boolean, shadows: boolean): void {
+    if (visible !== this.lodVisible) {
+      this.lodVisible = visible;
+      for (const r of this.visualRoots()) r.visible = visible;
+    }
+    if (visible && shadows !== this.lodShadows) {
+      this.lodShadows = shadows;
+      for (const r of this.visualRoots()) r.traverse((o) => ((o as THREE.Mesh).isMesh ? ((o as THREE.Mesh).castShadow = shadows) : null));
+    }
+  }
+
   hear(pos: THREE.Vector3, radius: number, source?: Damageable): void {
     if (!this.health.alive) return;
     this.perception.hear(this.ctx, pos, radius, this.eye(new THREE.Vector3()), source);

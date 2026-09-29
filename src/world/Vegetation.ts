@@ -10,6 +10,7 @@ import { NavObstacles } from '../ai/NavObstacles';
 
 const CELL = 256;
 const VIEW_DIST = 1000;
+const SHADOW_DIST = 140;
 type Kind = 'pine' | 'dead' | 'broad' | 'bush' | 'rock';
 
 function colored(g: THREE.BufferGeometry, color: THREE.ColorRepresentation, jitter = 0): THREE.BufferGeometry {
@@ -178,6 +179,7 @@ export class Vegetation {
         const im = new THREE.InstancedMesh(geos[kind], mats[kind], items.length);
         items.forEach((p, i) => im.setMatrixAt(i, p.m));
         im.castShadow = kind !== 'bush';
+        im.userData.canCast = kind !== 'bush';
         im.receiveShadow = true;
         im.computeBoundingSphere();
         group.add(im);
@@ -191,6 +193,12 @@ export class Vegetation {
     for (const c of this.cells) {
       const d = Math.hypot(c.center.x - camPos.x, c.center.z - camPos.z) - CELL * 0.7;
       c.group.visible = d < VIEW_DIST;
+      // Only nearby cells cast shadows (casters are re-drawn once per shadow cascade)
+      const cast = d < SHADOW_DIST;
+      if (c.group.userData.cast !== cast) {
+        c.group.userData.cast = cast;
+        c.group.children.forEach((m) => (m.castShadow = cast && m.userData.canCast !== false));
+      }
     }
   }
 }

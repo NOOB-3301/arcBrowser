@@ -120,6 +120,10 @@ export class RaiderBot extends Bot {
     this.bt = this.buildTree();
   }
 
+  protected visualRoots(): THREE.Object3D[] {
+    return [this.group, this.animator.root];
+  }
+
   get body(): RAPIER.RigidBody {
     return this.controller.rigidBody;
   }

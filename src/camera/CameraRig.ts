@@ -185,7 +185,13 @@ export class CameraRig {
       const hit = this.physics.sphereCast(shoulderPt, back, PROBE_RADIUS, dist, player.collider);
       if (hit !== null) dist = Math.max(0.2, hit - 0.05);
       // Snap in instantly, ease out slowly
-      this.armLength = dist < this.armLength ? dist : this.armLength + (dist - this.armLength) * damp(6);
+      // Pull in quickly but smoothly (instant snaps judder on slopes/grass edges); only hard-snap
+      // when the obstacle is right on top of the camera. Ease back out slowly.
+      if (dist < this.armLength) {
+        this.armLength = this.armLength - dist > 0.8 && dist < 0.9 ? dist : this.armLength + (dist - this.armLength) * damp(28);
+      } else {
+        this.armLength += (dist - this.armLength) * damp(5);
+      }
 
       this.camera.position.copy(shoulderPt).addScaledVector(back, this.armLength);
       this.camera.quaternion.copy(q);

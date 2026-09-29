@@ -41,7 +41,15 @@ const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
 /** Bones the procedural layer rotates (hip twist, aim pitch, recoil). */
-const PROC_BONES = ['pelvis', 'spine_01', 'spine_02', 'spine_03', 'Head'];
+const PROC_BONES = [
+  'pelvis', 'spine_01', 'spine_02', 'spine_03', 'Head',
+  // two-hand weapon IK writes these
+  'upperarm_l', 'lowerarm_l', 'hand_l', 'upperarm_r', 'lowerarm_r', 'hand_r',
+];
+const _m1 = new THREE.Matrix4();
+const _m2 = new THREE.Matrix4();
+const _p3 = new THREE.Vector3();
+const _s1 = new THREE.Vector3();
 const _v = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 const _e = new THREE.Euler();
@@ -83,6 +91,14 @@ export class Animator {
   private deathT = 0;
   private aimBlend = 0;
   private _m = new THREE.Vector3();
+  // ---- two-hand rifle IK (calibrated from the authored Rifle_Aim pose) ----
+  /** Hands in weapon space (weapon space = socket frame in the authored aim pose). */
+  private gripR: THREE.Matrix4 | null = null;
+  private gripL: THREE.Matrix4 | null = null;
+  /** Weapon transform in spine_03 space for the authored aim pose. */
+  private aimRel: THREE.Matrix4 | null = null;
+  private ikK = 0;
+  private sprintK = 0;
 
   constructor(scene: THREE.Scene, palette?: Palette) {
     const gltf = Assets.gltf('raider');
@@ -97,6 +113,7 @@ export class Animator {
       if (m.isMesh) {
         m.castShadow = true;
         m.frustumCulled = false; // animated bounds exceed the bind-pose sphere
+        if (m.isSkinnedMesh) fixFingerWeights(m);
       }
     });
     this.materials = cloneMaterials(this.model);
@@ -119,7 +136,34 @@ export class Animator {
       };
       this.slots.set(clip.name, { clip, actions: { full: mk(clip), lower: mk(lower), upper: mk(upper) }, time: 0, weight: 0, target: 0 });
     }
+    this.calibrateGrips();
     scene.add(this.root);
+  }
+
+  /**
+   * Sample the authored Rifle_Aim pose once and record where both hands sit relative to the
+   * rifle, and where the rifle sits relative to the chest. Every held pose (low-ready, sprint,
+   * aim) is then placed procedurally and the arms are solved to those grips, so the hands are
+   * always on the gun whatever the legs are doing.
+   */
+  private calibrateGrips(): void {
+    const s = this.slots.get('Rifle_Aim');
+    const chest = this.bones.spine_03;
+    const hl = this.bones.hand_l;
+    const hr = this.bones.hand_r;
+    if (!s || !chest || !hl || !hr) return;
+    const a = s.actions.full!;
+    a.play(); // actions only affect the pose while playing
+    a.setEffectiveWeight(1);
+    a.time = 0;
+    this.mixer.update(0);
+    this.root.updateMatrixWorld(true);
+    const weaponInv = _m1.copy(this.socket.matrixWorld).invert();
+    this.gripL = new THREE.Matrix4().multiplyMatrices(weaponInv, hl.matrixWorld);
+    this.gripR = new THREE.Matrix4().multiplyMatrices(weaponInv, hr.matrixWorld);
+    this.aimRel = new THREE.Matrix4().multiplyMatrices(_m2.copy(chest.matrixWorld).invert(), this.socket.matrixWorld);
+    a.stop();
+    this.mixer.update(0);
   }
 
   setWeapon(model: THREE.Object3D | null): void {
@@ -224,7 +268,15 @@ export class Animator {
     // ---- weapon layer ----------------------------------------------------------------------
     const hasGun = !!this.weapon;
     const canAim = !fullBody && hasGun;
-    this.upperK += ((canAim ? 1 : 0) - this.upperK) * damp(14);
+    // Weapon arm pose only while aiming / hip-firing (p.aiming) or reloading. Otherwise the
+    // locomotion clip drives the whole body so arms hang and swing naturally (the authored
+    // Rifle_Idle tucks the arms into the chest on this mesh); the rifle is held at low-ready.
+    const rifleIK = hasGun && !this.pistol && !!this.gripR;
+    const wantUpper = canAim && (rifleIK ? pose.reload >= 0 : p.aiming || pose.reload >= 0);
+    const ikTarget = rifleIK && !fullBody && !this.dead && pose.reload < 0 ? 1 : 0;
+    this.ikK += (ikTarget - this.ikK) * damp(12);
+    this.sprintK += ((p.locomotion === 'sprint' && !p.aiming ? 1 : 0) - this.sprintK) * damp(8);
+    this.upperK += ((wantUpper ? 1 : 0) - this.upperK) * damp(10);
     const aiming = p.aiming && canAim && pose.reload < 0;
     this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * damp(16);
     let upperClip: string;
@@ -280,12 +332,16 @@ export class Animator {
     }
     if (canAim && !this.dead) {
       const right = _v.set(1, 0, 0).applyQuaternion(this.root.getWorldQuaternion(_q2));
-      const pitch = THREE.MathUtils.clamp(camPitch, -1.1, 1.1) * this.upperK * (0.35 + 0.65 * this.aimBlend);
+      const pitch = THREE.MathUtils.clamp(camPitch, -1.1, 1.1) * (0.05 + 0.95 * this.aimBlend);
       const kick = pose.kick * 0.06;
       this.rotateBoneWorld('spine_02', right, pitch * 0.45 + kick);
       this.rotateBoneWorld('spine_03', right, pitch * 0.45);
       this.rotateBoneWorld('Head', right, pitch * 0.1);
     }
+    // Arms driven by the locomotion clip (unarmed / pistol at rest): the clip's arms clip into the bulky
+    // armoured torso, so hold the upper arms out a little and soften the elbows.
+    const relaxW = (fullBody || this.dead ? 0 : 1) * (1 - this.ikK) * (1 - this.upperK);
+    if (relaxW > 0.01) this.relaxArms(relaxW);
     // Weapon offsets: swap dips the gun, kick pushes it back along the barrel
     if (this.pistol) {
       // UAL pistol clips hold the hand differently from the rifle socket: point the barrel along the aim
@@ -294,20 +350,154 @@ export class Animator {
       _q2.setFromEuler(_e.set(pitch, this.yaw, 0, 'YXZ'));
       this.socket.getWorldQuaternion(_q).invert();
       this.gunMount.quaternion.copy(_q.multiply(_q2));
+    } else if (this.ikK > 0.001 && this.gripR && this.gripL && this.aimRel) {
+      this.solveRifle(camPitch, pose);
     } else {
-      // Rifles: the authored Rifle_* clips put the socket right when aiming, but the unarmed UAL
-      // locomotion clips (jog/sprint/crouch) swing the hand so the barrel points at the sky.
-      // Outside ADS, hold the rifle at low-ready in world space (forward, angled down) and blend
-      // back to the socket's own orientation as aim comes in.
-      const lowReady = -0.55 - pose.swap * 1.2;
-      _q2.setFromEuler(_e.set(lowReady, this.yaw, 0, 'YXZ'));
-      this.socket.getWorldQuaternion(_q).invert();
-      const world = _q.multiply(_q2);
-      const aimed = _q3.setFromEuler(_e.set(-pose.swap * 1.2, 0, 0));
-      this.gunMount.quaternion.copy(world).slerp(aimed, this.aimBlend);
+      this.gunMount.quaternion.identity();
+      this.gunMount.position.set(0, 0, 0);
     }
-    this.gunMount.position.z = pose.kick * 0.06;
+    if (this.pistol) this.gunMount.position.z = pose.kick * 0.06;
   }
+
+  /** Place the rifle (aim / low-ready / sprint port-arms blend) and solve both arms onto it. */
+  private solveRifle(camPitch: number, pose: CombatPose): void {
+    const chest = this.bones.spine_03;
+    this.root.updateMatrixWorld(true);
+    const up = _up;
+    const rootQ = this.root.getWorldQuaternion(_q3);
+    const right = _p3.set(1, 0, 0).applyQuaternion(rootQ);
+
+    // Authored aim pose, following the (procedurally pitched) chest
+    const W = _m1.multiplyMatrices(chest.matrixWorld, this.aimRel!);
+    const pos = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    W.decompose(pos, q, _s1);
+    // Make the barrel (-Z) point exactly along the aim direction when aiming
+    const aimDir = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(camPitch), Math.sin(camPitch), -Math.cos(this.yaw) * Math.cos(camPitch));
+    const barrel = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    const qAim = new THREE.Quaternion().setFromUnitVectors(barrel, aimDir).multiply(q);
+
+    // Held poses are built in the character's frame (not from the aim pose): the reference
+    // "patrol carry" has the grip at the right hip and the rifle level across the body, barrel
+    // pointing forward-left; the left hand lands on the handguard via the calibrated grip.
+    const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    // Upright rifle pointing straight ahead (roll from the authored grip is kept)
+    const qFlat = new THREE.Quaternion().setFromUnitVectors(barrel.clone(), fwd).multiply(q);
+    const hips = (this.bones.pelvis ?? chest).getWorldPosition(new THREE.Vector3());
+    const carry = (yawA: number, pitchA: number, height: number, out: number, side: number) => {
+      const qy = new THREE.Quaternion().setFromAxisAngle(up, yawA);
+      const r2 = right.clone().applyQuaternion(qy);
+      const qp = new THREE.Quaternion().setFromAxisAngle(r2, pitchA);
+      return {
+        p: hips.clone().addScaledVector(up, height).addScaledVector(fwd, out).addScaledVector(right, side),
+        q: qp.multiply(qy).multiply(qFlat),
+      };
+    };
+    const low = carry(0.75, -0.2, 0.06, 0.16, 0.2); // patrol carry: grip at right hip, barrel level forward-left
+    const port = carry(0.85, 0.55, 0.32, 0.18, 0.12); // sprint: raised across the chest, barrel up
+    const held = { p: low.p.clone().lerp(port.p, this.sprintK), q: low.q.clone().slerp(port.q, this.sprintK) };
+    const fp = held.p.clone().lerp(pos, this.aimBlend);
+    const fq = held.q.clone().slerp(qAim, this.aimBlend);
+    // Swap dips the gun, kick pushes it back along the barrel
+    if (pose.swap > 0) fq.premultiply(new THREE.Quaternion().setFromAxisAngle(right, -pose.swap * 1.1));
+    fp.addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(fq), pose.kick * 0.05);
+    const target = _m2.compose(fp, fq, _s1.set(1, 1, 1));
+
+    // Hands: blend from the animated pose to the grips by ikK
+    const k = this.ikK;
+    this.solveArm('r', new THREE.Matrix4().multiplyMatrices(target, this.gripR!), k, right);
+    this.solveArm('l', new THREE.Matrix4().multiplyMatrices(target, this.gripL!), k, right);
+
+    // Weapon follows the target (expressed in the post-IK socket frame)
+    this.socket.updateMatrixWorld(true);
+    const local = new THREE.Matrix4().multiplyMatrices(_m1.copy(this.socket.matrixWorld).invert(), target);
+    local.decompose(this.gunMount.position, this.gunMount.quaternion, _s1);
+    if (k < 0.999) {
+      this.gunMount.position.multiplyScalar(k);
+      this.gunMount.quaternion.slerp(_q.identity(), 1 - k);
+    }
+  }
+
+  /** Analytic two-bone IK (upperarm → lowerarm → hand) with an elbow pole down/outward. */
+  private solveArm(side: 'l' | 'r', target: THREE.Matrix4, k: number, right: THREE.Vector3): void {
+    const upper = this.bones[`upperarm_${side}`];
+    const lower = this.bones[`lowerarm_${side}`];
+    const hand = this.bones[`hand_${side}`];
+    if (!upper || !lower || !hand) return;
+    const tPos = new THREE.Vector3();
+    const tQ = new THREE.Quaternion();
+    target.decompose(tPos, tQ, _s1);
+    const h0 = hand.getWorldPosition(new THREE.Vector3());
+    const handQ0 = hand.getWorldQuaternion(new THREE.Quaternion());
+    tPos.lerpVectors(h0, tPos, k);
+    tQ.slerpQuaternions(handQ0, tQ, k);
+
+    const S = upper.getWorldPosition(new THREE.Vector3());
+    const E0 = lower.getWorldPosition(new THREE.Vector3());
+    const a = E0.distanceTo(S);
+    const b = h0.distanceTo(E0);
+    const toT = tPos.clone().sub(S);
+    const d = THREE.MathUtils.clamp(toT.length(), 0.05, a + b - 0.002);
+    const dir = toT.normalize();
+    const sgn = side === 'r' ? 1 : -1;
+    // Elbows down and well out from the body (avoid arms tucking into the torso)
+    const pole = new THREE.Vector3(0, -0.7, 0).addScaledVector(right, 1.0 * sgn);
+    pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+    const cosA = THREE.MathUtils.clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1);
+    const sinA = Math.sqrt(1 - cosA * cosA);
+    const E = S.clone().addScaledVector(dir, a * cosA).addScaledVector(pole, a * sinA);
+
+    this.aimBone(upper, E0.clone().sub(S), E.clone().sub(S));
+    const E1 = lower.getWorldPosition(new THREE.Vector3());
+    const H1 = hand.getWorldPosition(new THREE.Vector3());
+    this.aimBone(lower, H1.sub(E1), tPos.clone().sub(E1));
+    // Hand orientation from the calibrated grip
+    const parentQ = hand.parent!.getWorldQuaternion(new THREE.Quaternion()).invert();
+    hand.quaternion.copy(parentQ.multiply(tQ));
+    hand.updateMatrixWorld(true);
+  }
+
+  /** Keep the arms clear of the bulky torso (keeps fore/aft swing) with a slight elbow bend. */
+  private relaxArms(w: number): void {
+    this.model.updateMatrixWorld(true);
+    const rootQ = this.root.getWorldQuaternion(new THREE.Quaternion());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(rootQ);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(rootQ);
+    for (const side of ['l', 'r'] as const) {
+      const upper = this.bones[`upperarm_${side}`];
+      const lower = this.bones[`lowerarm_${side}`];
+      const hand = this.bones[`hand_${side}`];
+      if (!upper || !lower || !hand) continue;
+      const out = right.clone().multiplyScalar(side === 'r' ? 1 : -1);
+      const S = upper.getWorldPosition(new THREE.Vector3());
+      const E = lower.getWorldPosition(new THREE.Vector3());
+      const d = E.clone().sub(S).normalize();
+      // This mesh's armour is much bulkier than the UAL skeleton it was skinned to, so the clip's
+      // arms sink into the torso. Hold the upper arm at least ~25° out from the body (keeps swing).
+      const lat = d.dot(out);
+      const want = d.clone();
+      if (lat < 0.42) want.addScaledVector(out, (0.42 - lat) * w);
+      want.normalize();
+      this.aimBone(upper, d, want);
+      // Forearm: hang along the upper arm, bent ~20° forward, hands close to the thighs
+      const E1 = lower.getWorldPosition(new THREE.Vector3());
+      const H1 = hand.getWorldPosition(new THREE.Vector3());
+      const f = H1.clone().sub(E1).normalize();
+      const fWant = want.clone().addScaledVector(fwd, 0.35).addScaledVector(out, -0.12).normalize();
+      this.aimBone(lower, f, f.clone().lerp(fWant, 0.8 * w));
+    }
+  }
+
+  /** Rotate a bone (in world space) so its child direction `from` points along `to`. */
+  private aimBone(bone: THREE.Bone, from: THREE.Vector3, to: THREE.Vector3): void {
+    if (from.lengthSq() < 1e-8 || to.lengthSq() < 1e-8) return;
+    const dq = new THREE.Quaternion().setFromUnitVectors(from.normalize(), to.normalize());
+    const worldQ = bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(dq);
+    const parentQ = bone.parent!.getWorldQuaternion(new THREE.Quaternion()).invert();
+    bone.quaternion.copy(parentQ.multiply(worldQ));
+    bone.updateMatrixWorld(true);
+  }
+
 
   private upperW = new Map<string, number>();
   private driveUpper(clip: string, scrub: number, dt: number, damp: (r: number) => number): void {
@@ -357,6 +547,33 @@ function wrap(t: number, d: number): number {
 }
 
 /** Tints the textured suit toward the raider palette (keeps texture detail by blending with white). */
+/**
+ * The glove mesh has a few vertex islands skinned rigidly to finger bones that don't match its
+ * shape; the UAL clips curl those bones and fling the verts out as a blade-like spike. Rebind any
+ * finger influence to the hand. Geometry is shared between clones, so this runs once per asset.
+ */
+function fixFingerWeights(m: THREE.SkinnedMesh): void {
+  const g = m.geometry;
+  if (g.userData.fingersFixed) return;
+  g.userData.fingersFixed = true;
+  const bones = m.skeleton.bones;
+  const remap = bones.map((b, i) => {
+    const hit = /^(thumb|index|middle|ring|pinky)_\d+(?:_leaf)?_([lr])$/.exec(b.name);
+    if (!hit || hit[1] === 'thumb') return i;
+    const hand = bones.findIndex((x) => x.name === `hand_${hit[2]}`);
+    return hand >= 0 ? hand : i;
+  });
+  const si = g.attributes.skinIndex;
+  if (!si) return;
+  for (let v = 0; v < si.count; v++) {
+    for (let k = 0; k < 4; k++) {
+      const b = si.getComponent(v, k);
+      if (remap[b] !== b) si.setComponent(v, k, remap[b]);
+    }
+  }
+  si.needsUpdate = true;
+}
+
 function tint(m: THREE.MeshStandardMaterial, pal: Palette): void {
   const n = m.name.toLowerCase();
   const white = new THREE.Color(1, 1, 1);
