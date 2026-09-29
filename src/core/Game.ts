@@ -35,6 +35,7 @@ import { Throwables } from '../weapons/Throwables';
 import { Weather, WEATHER_STATES, type WeatherState } from '../world/Weather';
 import { BossBar, ThrowableWidget } from '../ui/BossBar';
 import { SHARDCOAST } from '../maps/shardcoast';
+import { RaidManager } from '../raid/RaidManager'; // W3
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -64,6 +65,8 @@ export class Game {
   private compass!: Compass;
   private mapView: MapView | null = null;
   ai!: AIDirector;
+  /** W3: raid loop + menus (null in the ?map=arena sandbox). */
+  raid: RaidManager | null = null;
   private stats!: Stats;
   // W4
   throwables!: Throwables;
@@ -140,6 +143,7 @@ export class Game {
     // Face into the map from the spawn
     if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
+    if (mapId !== 'arena') this.raid = new RaidManager(this); // W3: boots to the main menu
     // Compile every material up front (parallel where supported) so the first frames don't hitch
     progress('Compiling shaders…');
     this.rig.update(0, this.player, false, this.animator.root);
@@ -272,9 +276,17 @@ export class Game {
     const dt = this.time.delta;
 
     this.input.update(dt);
+    // W3: pause menu freezes the simulation (solo raid)
+    if (this.raid?.paused) {
+      this.raid.update(dt);
+      this.renderer.render(this.scene, this.camera);
+      this.stats.end();
+      this.stats.update();
+      return;
+    }
     const alive = this.combat.health.alive;
     const mapOpen = this.mapView?.open ?? false;
-    const active = this.hud.playing && alive && !mapOpen;
+    const active = this.hud.playing && alive && !mapOpen && !(this.raid?.blocksInput ?? false); // W3
     const aiming = active && this.input.adsAxis > 0.3;
     if (this.input.activeDevice === 'gamepad' && (this.input.pressed('fire') || this.input.pressed('jump'))) Sfx.unlock();
 
@@ -315,11 +327,12 @@ export class Game {
     this.weather.update(dt, this.camera.position); // W4
 
     if (this.mapView) {
-      if (this.hud.playing && this.input.pressed('map')) this.mapView.toggle();
+      if (this.hud.playing && this.input.pressed('map') && !(this.raid?.blocksInput ?? false)) this.mapView.toggle(); // W3
       this.mapView.update(this.player.renderCenter, this.rig.yaw);
     }
     this.compass.update(this.rig.yaw, this.player.renderCenter);
 
+    this.raid?.update(dt); // W3
     this.hud.update(dt, Settings.get('showDebug'), this.player, this.rig);
     this.combatHud.update(dt, this.combat, this.rig, this.player);
     this.bossBar.update(dt, this.ai.bots, this.player.renderCenter); // W4

@@ -29,6 +29,9 @@ export class Extracts {
   readonly points: ExtractPoint[] = [];
   private beamMat: THREE.ShaderMaterial;
   private rings: THREE.Mesh[] = [];
+  // W3: per-extract materials so raid logic can recolour beacons by state
+  private beamMats: THREE.ShaderMaterial[] = [];
+  private ringMats: THREE.MeshBasicMaterial[] = [];
 
   constructor(scene: THREE.Scene, hm: Heightmap, defs: ExtractDef[]) {
     this.beamMat = new THREE.ShaderMaterial({
@@ -44,10 +47,15 @@ export class Extracts {
     for (const def of defs) {
       const pos = def.pos.length === 3 ? new THREE.Vector3(def.pos[0], def.pos[1], def.pos[2]) : new THREE.Vector3(def.pos[0], hm.sample(def.pos[0], def.pos[1]), def.pos[1]);
       this.points.push({ def, pos });
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 140, 16, 1, true), this.beamMat);
+      const bm = this.beamMat.clone(); // W3
+      bm.uniforms.uTime = this.beamMat.uniforms.uTime;
+      this.beamMats.push(bm);
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 140, 16, 1, true), bm);
       beam.position.copy(pos).add(new THREE.Vector3(0, 70, 0));
       scene.add(beam);
-      const ring = new THREE.Mesh(new THREE.RingGeometry(4.6, 5, 48), ringMat);
+      const rm = ringMat.clone(); // W3
+      this.ringMats.push(rm);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(4.6, 5, 48), rm);
       ring.rotation.x = -Math.PI / 2;
       ring.position.copy(pos).add(new THREE.Vector3(0, 0.15, 0));
       scene.add(ring);
@@ -56,6 +64,14 @@ export class Extracts {
       label.position.copy(pos).add(new THREE.Vector3(0, 4, 0));
       scene.add(label);
     }
+  }
+
+  /** W3: recolour one beacon (open / closed / extracting). */
+  setColor(index: number, color: string, beamStrength = 1): void {
+    const bm = this.beamMats[index];
+    if (!bm) return;
+    (bm.uniforms.uColor.value as THREE.Color).set(color).multiplyScalar(beamStrength);
+    this.ringMats[index].color.set(color);
   }
 
   update(dt: number): void {

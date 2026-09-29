@@ -119,8 +119,18 @@ export class Throwables {
 
     SenseMods.smokeBlocks = (a, b) => this.smokeBlocks(a, b);
     Events.on('throwable:use', ({ id }: { id: ThrowableId }) => {
-      if (this.counts[id] > 0) this.throwNow(id);
+      if (this.countOf(id) > 0) this.throwNow(id);
     });
+  }
+
+  /**
+   * Where counts come from. Null = internal debug counters (arena). In a raid the
+   * inventory plugs in here so grenades are real items (integration W3×W4).
+   */
+  source: { count(id: ThrowableId): number; consume(id: ThrowableId): void } | null = null;
+
+  countOf(id: ThrowableId): number {
+    return this.source ? this.source.count(id) : this.counts[id];
   }
 
   add(id: ThrowableId, n: number): void {
@@ -129,7 +139,7 @@ export class Throwables {
   }
 
   get count(): number {
-    return this.counts[this.selected];
+    return this.countOf(this.selected);
   }
 
   /** Throwable id → live projectile count (debug/tests). */
@@ -141,7 +151,7 @@ export class Throwables {
     const i = ORDER.indexOf(this.selected);
     for (let k = 1; k <= ORDER.length; k++) {
       const id = ORDER[(i + k) % ORDER.length];
-      if (this.counts[id] > 0 || k === ORDER.length) {
+      if (this.countOf(id) > 0 || k === ORDER.length) {
         this.selected = id;
         break;
       }
@@ -210,8 +220,9 @@ export class Throwables {
   }
 
   private throwNow(id: ThrowableId): void {
-    if (this.counts[id] <= 0) return;
-    this.counts[id]--;
+    if (this.countOf(id) <= 0) return;
+    if (this.source) this.source.consume(id);
+    else this.counts[id]--;
     const s = { pos: new THREE.Vector3(), vel: new THREE.Vector3() };
     this.launch(s);
     const mesh = new THREE.Mesh(this.geo, new THREE.MeshStandardMaterial({ color: THROWABLE_DEFS[id].color, roughness: 0.5, metalness: 0.4, emissive: THROWABLE_DEFS[id].color, emissiveIntensity: 0.15 }));
@@ -226,8 +237,8 @@ export class Throwables {
     this.items.push(p);
     Sfx.throwItem();
     Events.emit('throwable:thrown', { id });
-    Events.emit('throwable:changed', { id, count: this.counts[id], selected: this.selected });
-    if (this.counts[this.selected] === 0) this.cycle();
+    Events.emit('throwable:changed', { id, count: this.countOf(id), selected: this.selected });
+    if (this.countOf(this.selected) === 0) this.cycle();
   }
 
   // ---------------------------------------------------------------- simulation (fixed step)
