@@ -157,6 +157,7 @@ export class Game {
     if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
     if (mapId !== 'arena') this.raid = new RaidManager(this); // W3: boots to the main menu
+    Sfx.attach(this); // W6a: spatial audio director (footsteps, ARC loops, ambience, occlusion)
     // Compile every material up front (parallel where supported) so the first frames don't hitch
     progress('Compiling shaders…');
     this.rig.update(0, this.player, false, this.animator.root);
@@ -302,6 +303,7 @@ export class Game {
     // W3: pause menu freezes the simulation (solo raid)
     if (this.raid?.paused) {
       this.raid.update(dt);
+      Sfx.update(dt, true); // W6a: ducked world audio + live volume sliders while paused
       this.post.render(dt); // W1 post chain also while paused
       this.stats.end();
       this.stats.update();
@@ -345,6 +347,7 @@ export class Game {
     this.world.update(dt, this.camera, this.player.renderCenter);
     this.ai.update(dt, this.player.renderCenter, this.time.alpha);
     Sfx.listener.copy(this.camera.position);
+    Sfx.update(dt); // W6a: listener pose, buses, occlusion/reverb, footsteps, ambience, music
     this.ballistics.render();
     this.effects.update(dt);
     this.weather.update(dt, this.camera.position); // W4
