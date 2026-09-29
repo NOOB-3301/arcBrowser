@@ -42,6 +42,7 @@ import { RenderGlobals } from '../render/RenderGlobals';
 import { PostFX } from '../render/PostFX';
 import { Quality, QUALITY_PRESETS, setQuality, type QualityLevel } from '../render/Quality';
 import { initTextures } from '../world/Materials';
+import { PauseMenu } from '../ui/PauseMenu'; // W5: pause menu + settings
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -81,6 +82,7 @@ export class Game {
   private throwWidget!: ThrowableWidget;
   private gui!: GUI;
   readonly post: PostFX; // W1
+  pauseMenu!: PauseMenu; // W5
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -156,6 +158,11 @@ export class Game {
     // Face into the map from the spawn
     if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
+    // W5: pause menu (raids route through RaidManager.paused; the arena pauses locally)
+    this.pauseMenu = new PauseMenu(this.input, {
+      raid: () => this.raid,
+      canPause: () => this.hud.playing && this.combat.health.alive && !(this.mapView?.open ?? false) && !(this.raid?.blocksInput ?? false) && !this.pauseMenu.simPaused,
+    });
     if (mapId !== 'arena') this.raid = new RaidManager(this); // W3: boots to the main menu
     // Compile every material up front (parallel where supported) so the first frames don't hitch
     progress('Compiling shaders…');
@@ -168,6 +175,7 @@ export class Game {
     this.stats = new Stats({ trackGPU: false, horizontal: true });
     this.stats.init(this.renderer);
     document.body.appendChild(this.stats.dom);
+    this.stats.dom.classList.add('w5-stats'); // W5: FPS counter toggle
 
     this.gui = new GUI({ title: 'Debug' });
     const inputFolder = this.gui.addFolder('Input');
@@ -299,9 +307,10 @@ export class Game {
     const dt = this.time.delta;
 
     this.input.update(dt);
+    this.pauseMenu.update(dt); // W5
     // W3: pause menu freezes the simulation (solo raid)
-    if (this.raid?.paused) {
-      this.raid.update(dt);
+    if (this.raid?.paused || this.pauseMenu.simPaused) { // W5: arena pause too
+      this.raid?.update(dt);
       this.post.render(dt); // W1 post chain also while paused
       this.stats.end();
       this.stats.update();

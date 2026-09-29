@@ -1,7 +1,7 @@
 import { Events } from '../core/Events';
-import type { Button, Input } from '../core/Input';
+import { KBM_BINDINGS, type Button, type Input } from '../core/Input';
 import type { InputMode } from '../core/Settings';
-import { glyph } from './Glyphs';
+import { glyph, keyLabel } from './Glyphs';
 import { Sfx } from '../audio/Sfx';
 import type { PlayerController } from '../player/PlayerController';
 import type { CameraRig } from '../camera/CameraRig';
@@ -27,6 +27,7 @@ const PROMPTS: [Button, string][] = [
   ['freeLook', 'Free look'],
   ['interact', 'Zipline / Ladder'],
   ['map', 'Map'],
+  ['pause', 'Pause'], // W5
 ];
 
 export class HUD {
@@ -81,6 +82,7 @@ export class HUD {
       this.refresh();
       this.refreshOverlay();
     });
+    Events.on('input:bindings', () => this.refresh()); // W5: key hints follow rebinding
     Events.on('input:pad', (p: { connected: boolean; id?: string }) => {
       this.showToast(p.connected ? `Controller connected` : 'Controller disconnected');
       this.refresh();
@@ -135,9 +137,14 @@ export class HUD {
     const i = this.input;
     const dev = i.activeDevice === 'gamepad' ? 'Controller' : 'KB+M';
     this.modeChip.innerHTML = `<b>F9</b> Input: ${MODE_LABEL[i.mode]}${i.mode === 'auto' ? ` <em>(${dev})</em>` : ''}`;
-    this.prompts.innerHTML = PROMPTS.map(
-      ([b, label]) => `<div><kbd>${glyph(b, i.activeDevice, i.padStyle)}</kbd>${label}</div>`,
-    ).join('');
+    // W5: movement keys are rebindable too
+    const move =
+      i.activeDevice === 'gamepad'
+        ? 'LS'
+        : (['moveForward', 'moveLeft', 'moveBack', 'moveRight'] as const).map((a) => keyLabel(KBM_BINDINGS[a].find((c) => c) ?? '')).join('');
+    this.prompts.innerHTML =
+      `<div><kbd>${move}</kbd>Move</div>` +
+      PROMPTS.map(([b, label]) => `<div><kbd>${glyph(b, i.activeDevice, i.padStyle)}</kbd>${label}${b === 'pause' && i.activeDevice === 'kbm' ? ' <em>(Esc)</em>' : ''}</div>`).join('');
   }
 
   private refreshOverlay(): void {

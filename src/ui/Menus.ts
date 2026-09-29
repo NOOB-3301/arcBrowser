@@ -11,6 +11,7 @@ import { InvBoard } from './InvBoard';
 import { PadNav, moveFocus } from './PadNav';
 import { fmtTime } from './RaidHUD';
 import { Sfx } from '../audio/Sfx';
+import { SettingsUI } from './SettingsUI'; // W5
 
 export interface RaidResult {
   outcome: RaidOutcome;
@@ -23,7 +24,7 @@ export interface RaidResult {
   difficulty: DifficultyId;
 }
 
-type Screen = 'main' | 'stash' | 'deploy' | 'settings' | 'credits' | 'pause' | 'results';
+type Screen = 'main' | 'stash' | 'deploy' | 'credits' | 'results'; // W5: pause + settings moved to PauseMenu / SettingsUI
 type StashTab = 'loadout' | 'trader' | 'workshop';
 
 const TIMES: { id: TimeOfDay; label: string }[] = [
@@ -50,6 +51,8 @@ export class Menus {
   private nav = new PadNav();
   private deployOpts: { difficulty: DifficultyId; time: TimeOfDay };
   private result: RaidResult | null = null;
+  /** W5: the settings overlay is on top; don't drive this screen with the pad. */
+  private suspended = false;
 
   constructor(private raid: RaidManager) {
     this.root = document.createElement('div');
@@ -62,9 +65,8 @@ export class Menus {
     });
     this.root.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
-      if (!this.screen || e.code !== 'Escape') return;
-      if (this.screen === 'pause') this.act('resume');
-      else if (this.screen !== 'main' && this.screen !== 'results') this.act('back');
+      if (!this.screen || e.code !== 'Escape' || this.suspended) return;
+      if (this.screen !== 'main' && this.screen !== 'results') this.act('back');
     });
     Events.on('profile:changed', () => {
       if (this.screen === 'stash' && this.tab !== 'loadout') this.render();
@@ -77,6 +79,7 @@ export class Menus {
   }
 
   hide(): void {
+    this.raid.game.pauseMenu?.hide(); // W5
     this.screen = null;
     this.disposeBoard();
     this.root.innerHTML = '';
@@ -88,7 +91,8 @@ export class Menus {
   }
 
   showPause(): void {
-    this.go('pause');
+    this.hide();
+    this.raid.game.pauseMenu.show(); // W5
   }
 
   showResults(r: RaidResult): void {
@@ -118,12 +122,23 @@ export class Menus {
         this.tab = arg as StashTab;
         this.render();
         return;
-      case 'settings':
-        return this.go('settings');
+      case 'settings': {
+        // W5: shared settings overlay
+        this.suspended = true;
+        SettingsUI.open({
+          onClose: () => {
+            this.suspended = false;
+            this.nav.poll(0);
+            this.nav.consume();
+            this.root.querySelector<HTMLElement>('[data-act="settings"]')?.focus({ preventScroll: true });
+          },
+        });
+        return;
+      }
       case 'credits':
         return this.go('credits');
       case 'back':
-        return this.go(this.raid.phase === 'raid' ? 'pause' : 'main');
+        return this.go('main');
       case 'diff':
         this.deployOpts.difficulty = arg as DifficultyId;
         this.render();
@@ -135,13 +150,6 @@ export class Menus {
       case 'deploy':
         Sfx.unlock();
         this.raid.deploy({ ...this.deployOpts });
-        return;
-      case 'resume':
-        this.raid.setPaused(false);
-        return;
-      case 'abandon':
-        this.raid.setPaused(false);
-        this.raid.endRaid('mia');
         return;
       case 'continue':
         this.raid.toMenu();
@@ -168,12 +176,6 @@ export class Menus {
         let total = 0;
         for (const s of [...p.stash.items]) if (itemDef(s.id).cat === 'valuable') total += p.sell(s);
         if (total) Events.emit('toast', `Sold valuables for ${total.toLocaleString()} cr`);
-        this.render();
-        return;
-      }
-      case 'set': {
-        const [key, val] = (arg ?? '').split(':');
-        if (key === 'invertY' || key === 'showDebug' || key === 'rumble') Settings.set(key, val === '1');
         this.render();
         return;
       }
@@ -212,7 +214,7 @@ export class Menus {
               <button data-nav data-act="stash"><span>Stash &amp; Loadout</span><small>Gear up · what you bring is at risk</small></button>
               <button data-nav data-act="stash" data-arg="trader"><span>Trader</span><small>Sell valuables · buy kits</small></button>
               <button data-nav data-act="stash" data-arg="workshop"><span>Workshop</span><small>Craft ammo &amp; meds</small></button>
-              <button data-nav data-act="settings"><span>Settings</span></button>
+              <button data-nav data-act="settings"><span>Settings</span><small>Graphics · controls · key bindings · audio</small></button>
               <button data-nav data-act="credits"><span>Credits</span></button>
             </nav>
             <aside class="m-side">
@@ -238,19 +240,6 @@ export class Menus {
       case 'deploy':
         this.renderDeploy(credits);
         break;
-      case 'settings': {
-        const b = (k: 'invertY' | 'showDebug' | 'rumble', label: string) =>
-          `<button data-nav class="m-toggle ${Settings.get(k) ? 'on' : ''}" data-act="set" data-arg="${k}:${Settings.get(k) ? 0 : 1}"><span>${label}</span><b>${Settings.get(k) ? 'ON' : 'OFF'}</b></button>`;
-        this.root.innerHTML = `
-          <div class="m-page m-narrow">
-            <header class="m-head"><h2>Settings</h2><button data-nav data-act="back" class="m-back">Back</button></header>
-            <div class="m-card">
-              ${b('invertY', 'Invert look Y')}${b('rumble', 'Controller rumble')}${b('showDebug', 'Debug overlay')}
-              <p class="m-dim">Sensitivity, FOV and more live in the Debug panel (top right). F9 cycles input device.</p>
-            </div>
-          </div>`;
-        break;
-      }
       case 'credits':
         this.root.innerHTML = `
           <div class="m-page m-narrow">
@@ -260,17 +249,6 @@ export class Menus {
               <p>Built with three.js, Rapier and Vite. Textures from Poly Haven (CC0).</p>
               <p class="m-dim">Loot, raid loop and menus: milestone M6.</p>
             </div>
-          </div>`;
-        break;
-      case 'pause':
-        this.root.innerHTML = `
-          <div class="m-page m-narrow m-pause">
-            <header class="m-head"><h2>Paused</h2><span class="m-dim">Raid time ${fmtTime(this.raid.timeLeft)}</span></header>
-            <nav class="m-nav">
-              <button data-nav data-act="resume" class="primary"><span>Resume</span></button>
-              <button data-nav data-act="settings"><span>Settings</span></button>
-              <button data-nav data-act="abandon" class="danger"><span>Abandon raid</span><small>Counts as MIA · loadout lost</small></button>
-            </nav>
           </div>`;
         break;
       case 'results':
@@ -427,7 +405,7 @@ export class Menus {
   // ================================================================ per frame (pad)
 
   update(dt: number): void {
-    if (!this.screen) return;
+    if (!this.screen || this.suspended) return;
     this.nav.poll(dt);
     const n = this.nav;
     // LB cycles stash tabs (RB is "split" inside the item board)
@@ -444,10 +422,6 @@ export class Menus {
     }
     for (const d of ['up', 'down', 'left', 'right'] as const) if (n.pressed(d)) moveFocus(this.root, d);
     if (n.pressed('a')) (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[data-nav]')?.click();
-    if (n.pressed('b')) {
-      if (this.screen === 'pause') this.act('resume');
-      else if (this.screen !== 'main' && this.screen !== 'results') this.act('back');
-    }
-    if (n.pressed('menu') && this.screen === 'pause') this.act('resume');
+    if (n.pressed('b') && this.screen !== 'main' && this.screen !== 'results') this.act('back');
   }
 }

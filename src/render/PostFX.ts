@@ -10,6 +10,7 @@ import type { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 import { N8AOPass } from 'n8ao';
 import { Quality, type QualityPreset } from './Quality';
 import { FogUniforms, RenderGlobals } from './RenderGlobals';
+import { Settings } from '../core/Settings'; // W5: dynamic resolution toggle
 
 /** Screen-space sun shafts: march from each pixel towards the sun, accumulating sky (depth = far) samples. */
 const GodRaysShader = {
@@ -268,7 +269,7 @@ export class PostFX {
 
   render(dt: number): void {
     RenderGlobals.time.value += dt;
-    this.adaptResolution(dt);
+    if (Settings.get('dynamicRes')) this.adaptResolution(dt); else if (this.resScale !== 1) { this.resScale = 1; this.applyPixelRatio(); } // W5: toggle
     if (!this.enabled) {
       this.renderer.render(this.scene, this.camera);
       return;

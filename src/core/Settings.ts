@@ -17,7 +17,27 @@ export interface SettingsData {
   showDebug: boolean;
   difficulty: 'recruit' | 'veteran' | 'elite' | 'nightmare';
   graphicsQuality: 'low' | 'medium' | 'high' | 'ultra';
+  // W5: settings menu
+  /** Adaptive render resolution under load (PostFX). */
+  dynamicRes: boolean;
+  /** stats-gl FPS panel. */
+  showFps: boolean;
+  /** Camera shake multiplier (0 = off). */
+  cameraShake: number;
+  /** Aim assist strength remembered while the toggle is off (aimAssist itself is 0 when off). */
+  aimAssistStrength: number;
+  /** Audio mix 0..1 (read by the audio system via Settings.get). */
+  volMaster: number;
+  volSfx: number;
+  volMusic: number;
+  volUi: number;
+  /** Colour-blind safe HUD marker palette. */
+  colorblind: ColorblindMode;
+  /** Crosshair colour (CSS colour). */
+  crosshairColor: string;
 }
+
+export type ColorblindMode = 'off' | 'deuter' | 'prot' | 'trit';
 
 const STORAGE_KEY = 'rustfall.settings.v1';
 
@@ -36,7 +56,20 @@ const DEFAULTS: SettingsData = {
   showDebug: false,
   difficulty: 'veteran',
   graphicsQuality: 'high',
+  // W5
+  dynamicRes: true,
+  showFps: true,
+  cameraShake: 1,
+  aimAssistStrength: 0.5,
+  volMaster: 0.8,
+  volSfx: 1,
+  volMusic: 0.6,
+  volUi: 0.8,
+  colorblind: 'off',
+  crosshairColor: '#f1ead8',
 };
+
+export const SETTINGS_DEFAULTS: Readonly<SettingsData> = DEFAULTS;
 
 function load(): SettingsData {
   try {
@@ -59,6 +92,11 @@ export const Settings = {
     this.data[key] = value;
     this.save();
     Events.emit('settings:changed', { key, value });
+  },
+
+  /** W5: restore the given keys (or everything) to defaults, notifying listeners per key. */
+  reset(keys?: (keyof SettingsData)[]): void {
+    for (const k of keys ?? (Object.keys(DEFAULTS) as (keyof SettingsData)[])) this.set(k, DEFAULTS[k] as never);
   },
 
   save(): void {

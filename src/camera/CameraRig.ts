@@ -146,7 +146,7 @@ export class CameraRig {
     this.pivot.set(feet.x, this.pivotY + this.eyeHeight + this.dip * 0.12, feet.z);
 
     // --- orientation
-    const shakeAmt = this.trauma * this.trauma;
+    const shakeAmt = this.trauma * this.trauma * Settings.get('cameraShake'); // W5: shake scale
     const shakeYaw = shakeAmt * 0.06 * Math.sin(this.time * 37.1 + 1.3) * Math.sin(this.time * 13.7);
     const shakePitch = shakeAmt * 0.05 * Math.sin(this.time * 31.3) * Math.cos(this.time * 17.9);
     const shakeRoll = shakeAmt * 0.04 * Math.sin(this.time * 23.5 + 0.7);
