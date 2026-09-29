@@ -23,7 +23,7 @@ html, body {
 #ui { position: fixed; inset: 0; pointer-events: none; }
 
 .hud-tag {
-  position: absolute; top: 14px; left: 16px;
+  position: absolute; top: 58px; left: 16px;
   font-weight: 800; letter-spacing: 0.2em; font-size: 14px;
 }
 .hud-tag span { font-weight: 400; letter-spacing: 0.05em; color: var(--ui-dim); margin-left: 8px; }
@@ -37,10 +37,28 @@ html, body {
 .hud-mode em { color: var(--ui-dim); font-style: normal; }
 
 .crosshair {
+  --spread: 12px;
   position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
   margin: -2px 0 0 -2px; border-radius: 50%; background: var(--ui-fg);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); transition: opacity 0.15s;
 }
+.crosshair i {
+  position: absolute; background: var(--ui-fg); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  transition: transform 0.08s linear;
+}
+.crosshair i:nth-child(1), .crosshair i:nth-child(2) { width: 2px; height: 8px; left: 1px; top: -3px; }
+.crosshair i:nth-child(3), .crosshair i:nth-child(4) { width: 8px; height: 2px; left: -3px; top: 1px; }
+.crosshair i:nth-child(1) { transform: translateY(calc(-1 * var(--spread))); }
+.crosshair i:nth-child(2) { transform: translateY(var(--spread)); }
+.crosshair i:nth-child(3) { transform: translateX(calc(-1 * var(--spread))); }
+.crosshair i:nth-child(4) { transform: translateX(var(--spread)); }
+
+.stamina {
+  position: absolute; left: 50%; bottom: 64px; width: 220px; height: 5px; margin-left: -110px;
+  background: rgba(0, 0, 0, 0.45); border-radius: 3px; overflow: hidden; transition: opacity 0.4s;
+}
+.stamina-fill { height: 100%; width: 100%; background: var(--ui-fg); }
+.stamina.exhausted .stamina-fill { background: #d9482b; }
 
 .hud-prompts {
   position: absolute; right: 16px; bottom: 16px;

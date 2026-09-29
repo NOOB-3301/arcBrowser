@@ -14,6 +14,8 @@ export const Groups = {
   DEBRIS: 1 << 5,
 } as const;
 
+const IDENTITY = { x: 0, y: 0, z: 0, w: 1 };
+
 export function interactionGroups(membership: number, filter: number): number {
   return ((membership & 0xffff) << 16) | (filter & 0xffff);
 }
@@ -103,6 +105,42 @@ export class Physics {
       distance: hit.timeOfImpact,
       collider: hit.collider,
     };
+  }
+
+  /** Sweep a sphere; returns hit distance along dir or null. */
+  sphereCast(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    radius: number,
+    maxDist: number,
+    exclude?: RAPIER.Collider,
+  ): number | null {
+    const hit = this.world.castShape(
+      origin,
+      IDENTITY,
+      dir,
+      new RAPIER.Ball(radius),
+      0,
+      maxDist,
+      true,
+      undefined,
+      undefined,
+      exclude,
+    );
+    return hit ? hit.time_of_impact : null;
+  }
+
+  /** True if a vertical capsule centred at pos overlaps nothing (ignoring exclude). */
+  capsuleFree(pos: THREE.Vector3, halfHeight: number, radius: number, exclude?: RAPIER.Collider): boolean {
+    const hit = this.world.intersectionWithShape(
+      pos,
+      IDENTITY,
+      new RAPIER.Capsule(halfHeight, radius),
+      undefined,
+      interactionGroups(0xffff, Groups.WORLD | Groups.DEBRIS),
+      exclude,
+    );
+    return hit === null;
   }
 
   // ---------------------------------------------------------------- debug

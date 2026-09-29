@@ -2,6 +2,8 @@ import { Events } from '../core/Events';
 import type { Button, Input } from '../core/Input';
 import type { InputMode } from '../core/Settings';
 import { glyph } from './Glyphs';
+import type { PlayerController } from '../player/PlayerController';
+import type { CameraRig } from '../camera/CameraRig';
 
 const MODE_LABEL: Record<InputMode, string> = {
   auto: 'Auto',
@@ -10,12 +12,14 @@ const MODE_LABEL: Record<InputMode, string> = {
 };
 
 const PROMPTS: [Button, string][] = [
-  ['jump', 'Jump'],
+  ['jump', 'Jump / Mantle'],
   ['sprint', 'Sprint'],
-  ['crouch', 'Crouch'],
+  ['crouch', 'Crouch / Slide'],
+  ['dodge', 'Dodge roll'],
   ['ads', 'Aim'],
-  ['fire', 'Fire'],
   ['swapShoulder', 'Swap shoulder'],
+  ['freeLook', 'Free look'],
+  ['interact', 'Zipline / Ladder'],
 ];
 
 export class HUD {
@@ -26,13 +30,17 @@ export class HUD {
   private overlay: HTMLElement;
   private debug: HTMLElement;
   private toastTimer = 0;
+  private crosshair: HTMLElement;
+  private staminaEl: HTMLElement;
+  private staminaFill: HTMLElement;
 
   constructor(private input: Input) {
     this.root = document.getElementById('ui')!;
     this.root.innerHTML = `
-      <div class="hud-tag">RUSTFALL <span>M1 · test arena</span></div>
+      <div class="hud-tag">RUSTFALL <span>M2 · movement + camera</span></div>
       <div class="hud-mode"></div>
-      <div class="crosshair"></div>
+      <div class="crosshair"><i></i><i></i><i></i><i></i></div>
+      <div class="stamina"><div class="stamina-fill"></div></div>
       <div class="hud-prompts"></div>
       <div class="hud-toast"></div>
       <pre class="hud-debug"></pre>
@@ -48,6 +56,9 @@ export class HUD {
     this.toast = this.root.querySelector('.hud-toast')!;
     this.overlay = this.root.querySelector('.overlay')!;
     this.debug = this.root.querySelector('.hud-debug')!;
+    this.crosshair = this.root.querySelector('.crosshair')!;
+    this.staminaEl = this.root.querySelector('.stamina')!;
+    this.staminaFill = this.root.querySelector('.stamina-fill')!;
 
     this.overlay.addEventListener('click', () => input.requestPointerLock());
     Events.on('input:pointerlock', () => this.refreshOverlay());
@@ -73,7 +84,18 @@ export class HUD {
     return this.input.pointerLocked || (this.input.activeDevice === 'gamepad' && this.input.padConnected);
   }
 
-  update(dt: number, showDebug: boolean): void {
+  update(dt: number, showDebug: boolean, player: PlayerController, rig: CameraRig): void {
+    // Stamina: visible only when not full
+    const st = player.stamina;
+    this.staminaEl.style.opacity = st.fraction < 0.995 ? '1' : '0';
+    this.staminaFill.style.width = `${(st.fraction * 100).toFixed(1)}%`;
+    this.staminaEl.classList.toggle('exhausted', st.exhausted);
+
+    // Crosshair spread: tight when ADS, wide when sprinting/airborne
+    const spread = rig.ads > 0.5 ? 4 : player.locomotion === 'sprint' || !player.grounded ? 22 : 12;
+    this.crosshair.style.setProperty('--spread', `${spread}px`);
+    this.crosshair.style.opacity = player.locomotion === 'sprint' || player.state === 'roll' ? '0.25' : '1';
+
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) this.toast.classList.remove('show');
@@ -88,7 +110,11 @@ export class HUD {
         `device  ${i.activeDevice}${i.activeDevice === 'gamepad' ? ` (${i.padStyle})` : ''}\n` +
         `move    ${i.moveX.toFixed(2)} ${i.moveY.toFixed(2)}\n` +
         `trig    fire ${i.fireAxis.toFixed(2)}  ads ${i.adsAxis.toFixed(2)}\n` +
-        `held    ${held || '-'}`;
+        `held    ${held || '-'}\n` +
+        `state   ${player.state} / ${player.locomotion}${player.crouched ? ' (crouched)' : ''}\n` +
+        `speed   ${player.horizontalSpeed.toFixed(2)} m/s  vy ${player.velocity.y.toFixed(1)}\n` +
+        `stamina ${st.value.toFixed(0)}${st.exhausted ? ' EXHAUSTED' : ''}\n` +
+        `camera  ${rig.shoulder > 0 ? 'right' : 'left'} shoulder  ads ${rig.ads.toFixed(2)}${rig.firstPerson ? '  FP' : ''}`;
     }
   }
 

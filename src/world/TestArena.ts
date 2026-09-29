@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Physics } from '../physics/Physics';
+import type { Traversal } from './Traversal';
 
 /**
  * Greybox movement/combat test arena: ledges of known heights, slopes, stairs,
@@ -8,7 +9,7 @@ import type { Physics } from '../physics/Physics';
 export class TestArena {
   readonly spawn = new THREE.Vector3(0, 2, 8);
 
-  constructor(private scene: THREE.Scene, private physics: Physics) {}
+  constructor(private scene: THREE.Scene, private physics: Physics, private traversal: Traversal) {}
 
   build(): void {
     this.ground();
@@ -19,6 +20,9 @@ export class TestArena {
     this.crates();
     this.markers();
     this.tower();
+    this.vaultWalls();
+    this.slideHill();
+    this.ladderAndZipline();
   }
 
   // ------------------------------------------------------------------ helpers
@@ -154,6 +158,58 @@ export class TestArena {
         this.box(new THREE.Vector3(60, 1.5, sign * d), new THREE.Vector3(0.4, 3, 0.4), mat);
       }
     }
+  }
+
+  /** Thin low walls (vault) and a deep low block (mantle, not vault). */
+  private vaultWalls(): void {
+    const mat = this.mat('#8f8374', '#6a6054', 1);
+    [0.9, 1.1, 1.2].forEach((h, i) => {
+      this.box(new THREE.Vector3(-16 + i * 7, h / 2, 45), new THREE.Vector3(4, h, 0.3), mat);
+    });
+    this.box(new THREE.Vector3(8, 0.5, 45), new THREE.Vector3(4, 1, 3), mat);
+  }
+
+  /** Long gentle hill for downhill slides. */
+  private slideHill(): void {
+    const mat = this.mat('#6b7358', '#565d46', 2);
+    const a = THREE.MathUtils.degToRad(12);
+    const len = 40;
+    const h = Math.sin(a) * len;
+    this.box(new THREE.Vector3(-70, h / 2 - 0.2, 0), new THREE.Vector3(8, 0.4, len), mat, new THREE.Euler(-a, 0, 0));
+    this.box(new THREE.Vector3(-70, h / 2, len / 2 + 3), new THREE.Vector3(8, h, 6), mat);
+  }
+
+  private ladderAndZipline(): void {
+    // Ladder on the tower's +Z face (tower: centre -45,6,-30, 8×12×8 → face at z=-26)
+    const railMat = new THREE.MeshStandardMaterial({ color: '#d9b43a', roughness: 0.5, metalness: 0.4 });
+    const base = new THREE.Vector3(-45, 0, -26);
+    const height = 12;
+    for (const x of [-0.35, 0.35]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, height + 1, 0.06), railMat);
+      rail.position.set(base.x + x, (height + 1) / 2, base.z + 0.08);
+      rail.castShadow = true;
+      this.scene.add(rail);
+    }
+    for (let y = 0.3; y < height + 1; y += 0.35) {
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.04), railMat);
+      rung.position.set(base.x, y, base.z + 0.08);
+      this.scene.add(rung);
+    }
+    this.traversal.ladders.push({ base, height, normal: new THREE.Vector3(0, 0, 1), halfWidth: 0.4 });
+
+    // Zipline from tower roof down across the arena
+    const a = new THREE.Vector3(-43, 14.2, -28);
+    const b = new THREE.Vector3(-4, 2.6, 38);
+    const cableMat = new THREE.LineBasicMaterial({ color: '#222' });
+    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), cableMat));
+    const poleMat = new THREE.MeshStandardMaterial({ color: '#444a50', roughness: 0.6, metalness: 0.5 });
+    for (const [p, h] of [[a, 2.4], [b, 3.0]] as const) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, h), poleMat);
+      pole.position.set(p.x, p.y - h / 2 + 0.3, p.z);
+      pole.castShadow = true;
+      this.scene.add(pole);
+    }
+    this.traversal.ziplines.push({ a, b });
   }
 
   private tower(): void {
