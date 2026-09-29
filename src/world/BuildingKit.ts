@@ -12,21 +12,22 @@ let MATS: Record<KitMat, THREE.Material> | null = null;
 function mats(): Record<KitMat, THREE.Material> {
   if (MATS) return MATS;
   MATS = {
-    concrete: triplanarMaterial('concrete_wall_008', { scale: 5, color: '#ffffff', gain: 1.25 }),
-    plaster: triplanarMaterial('plastered_wall_02', { scale: 4, color: '#f2e6d0', gain: 1.15 }),
-    brick: triplanarMaterial('red_brick_03', { scale: 2.5, color: '#ffffff', gain: 1.2 }),
-    metal: triplanarMaterial('corrugated_iron', { scale: 2.5, color: '#b9bcbf', metalness: 0.4, roughness: 0.6 }),
-    rust: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#ffffff', metalness: 0.3, roughness: 0.75 }),
-    roof: triplanarMaterial('corrugated_iron', { scale: 2, color: '#8a4b3a', metalness: 0.3, roughness: 0.7 }),
+    // W1: PBR triplanar kit materials (albedo + normal + roughness + AO, grime, wetness)
+    concrete: triplanarMaterial('concrete_wall_008', { scale: 4, color: '#f4f1ea', grime: 0.8 }),
+    plaster: triplanarMaterial('plastered_wall_02', { scale: 3.5, color: '#efe3cc', grime: 0.75 }),
+    brick: triplanarMaterial('red_brick_03', { scale: 2.5, color: '#ffffff', grime: 0.6 }),
+    metal: triplanarMaterial('corrugated_iron', { scale: 2.5, color: '#c9ccd0', metalness: 0.6, roughness: 0.9, grime: 0.5, porosity: 0.15 }),
+    rust: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#ffffff', metalness: 0.35, grime: 0.5, porosity: 0.3 }),
+    roof: triplanarMaterial('corrugated_iron', { scale: 2, color: '#a4604a', metalness: 0.35, grime: 0.6, porosity: 0.2 }),
     wood: new THREE.MeshStandardMaterial({ color: '#6d5238', roughness: 0.9 }),
-    dark: new THREE.MeshStandardMaterial({ color: '#2d2f31', roughness: 0.7, metalness: 0.4 }),
-    asphalt: triplanarMaterial('asphalt_02', { scale: 5, color: '#9a9a9a' }),
+    dark: new THREE.MeshStandardMaterial({ color: '#2d2f31', roughness: 0.55, metalness: 0.6 }),
+    asphalt: triplanarMaterial('asphalt_02', { scale: 5, color: '#b4b4b4', grime: 0.3, porosity: 0.6 }),
     crate: new THREE.MeshStandardMaterial({ color: '#7c6a3e', roughness: 0.85 }),
-    cRed: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#c0503a', metalness: 0.3, roughness: 0.7 }),
-    cBlue: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#4f7aa8', metalness: 0.3, roughness: 0.7 }),
-    cGreen: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#5e8a55', metalness: 0.3, roughness: 0.7 }),
-    cYellow: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#d6a93a', metalness: 0.3, roughness: 0.7 }),
-    cGrey: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#9aa0a4', metalness: 0.3, roughness: 0.7 }),
+    cRed: triplanarMaterial('corrugated_iron', { scale: 1.6, color: '#b8442e', metalness: 0.45, grime: 0.7, porosity: 0.2 }),
+    cBlue: triplanarMaterial('corrugated_iron', { scale: 1.6, color: '#3f6d9e', metalness: 0.45, grime: 0.7, porosity: 0.2 }),
+    cGreen: triplanarMaterial('corrugated_iron', { scale: 1.6, color: '#4f7a48', metalness: 0.45, grime: 0.7, porosity: 0.2 }),
+    cYellow: triplanarMaterial('corrugated_iron', { scale: 1.6, color: '#d4a02e', metalness: 0.45, grime: 0.7, porosity: 0.2 }),
+    cGrey: triplanarMaterial('rusty_metal_02', { scale: 3, color: '#b9bec2', metalness: 0.4, grime: 0.7, porosity: 0.2 }),
     hazard: new THREE.MeshStandardMaterial({ color: '#e0b020', roughness: 0.6 }),
   };
   return MATS;

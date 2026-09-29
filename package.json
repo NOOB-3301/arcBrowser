@@ -12,6 +12,8 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
     "lil-gui": "^0.21.0",
+    "n8ao": "^2.0.1",
+    "postprocessing": "^6.39.5",
     "stats-gl": "^4.2.3",
     "three": "^0.186.1"
   },

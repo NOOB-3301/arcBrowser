@@ -30,6 +30,11 @@ import { HUD } from '../ui/HUD';
 import { AIDirector } from '../ai/AIDirector';
 import { DIFFICULTIES, type DifficultyId } from '../ai/Difficulty';
 import type { BotKind } from '../ai/Bot';
+// W1: renderer / post-processing
+import '../render/RenderGlobals';
+import { PostFX } from '../render/PostFX';
+import { Quality, QUALITY_PRESETS, setQuality, type QualityLevel } from '../render/Quality';
+import { initTextures } from '../world/Materials';
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -61,6 +66,7 @@ export class Game {
   ai!: AIDirector;
   private stats!: Stats;
   private gui!: GUI;
+  readonly post: PostFX; // W1
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -72,6 +78,10 @@ export class Game {
     this.renderer.toneMappingExposure = 0.9;
 
     this.camera = new THREE.PerspectiveCamera(Settings.get('fov'), window.innerWidth / window.innerHeight, 0.05, 2600);
+    // W1: quality preset, KTX2 textures, post chain (sets AgX tone mapping + pixel ratio)
+    if (Quality.level !== Settings.get('graphicsQuality')) setQuality(Settings.get('graphicsQuality'));
+    initTextures(this.renderer);
+    this.post = new PostFX(this.renderer, this.scene, this.camera);
     this.input = new Input(canvas);
 
     window.addEventListener('resize', () => this.onResize());
@@ -156,6 +166,16 @@ export class Game {
     bind(inputFolder, 'adsSensitivityMultiplier', 0.2, 1, 0.05);
 
     const view = this.gui.addFolder('View');
+    // W1: graphics quality preset
+    const gq = { q: Quality.level as QualityLevel };
+    view
+      .add(gq, 'q', Object.fromEntries(Object.entries(QUALITY_PRESETS).map(([k, v]) => [v.label, k])))
+      .name('Graphics quality')
+      .onChange((q: QualityLevel) => {
+        Settings.set('graphicsQuality', q);
+        setQuality(q);
+      });
+    view.add(this.post, 'enabled').name('Post-processing');
     bind(view, 'fov', 55, 100, 1);
     bind(view, 'showDebug');
     view
@@ -289,7 +309,7 @@ export class Game {
 
     this.hud.update(dt, Settings.get('showDebug'), this.player, this.rig);
     this.combatHud.update(dt, this.combat, this.rig, this.player);
-    this.renderer.render(this.scene, this.camera);
+    this.post.render(dt); // W1: was renderer.render(scene, camera)
     this.stats.end();
     this.stats.update();
   }
@@ -306,6 +326,6 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.post.setSize(window.innerWidth, window.innerHeight); // W1
   }
 }

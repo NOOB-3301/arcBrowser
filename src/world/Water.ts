@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { MapDef } from './MapDef';
+import { HEIGHT_FN, RenderGlobals, heightUniforms } from '../render/RenderGlobals';
 
 const vert = /* glsl */ `
   uniform float uTime;
@@ -21,30 +22,66 @@ const frag = /* glsl */ `
   uniform vec3 uSunColor;
   uniform vec3 uDeep;
   uniform vec3 uShallow;
-  uniform vec3 uSky;
+  uniform vec3 uAmbient;
   uniform float uFlow;
+  uniform samplerCube tSky;
   varying vec3 vWorld;
+  ${HEIGHT_FN}
   #include <fog_pars_fragment>
 
-  float wave(vec2 p, vec2 d, float f, float s) { return sin(dot(p, d) * f + uTime * s); }
+  float h21( vec2 p ) { return fract( sin( dot( p, vec2( 127.1, 311.7 ) ) ) * 43758.5453 ); }
+  float vnoise( vec2 p ) {
+    vec2 i = floor( p ); vec2 f = fract( p ); vec2 u = f * f * ( 3.0 - 2.0 * f );
+    return mix( mix( h21( i ), h21( i + vec2( 1, 0 ) ), u.x ), mix( h21( i + vec2( 0, 1 ) ), h21( i + vec2( 1, 1 ) ), u.x ), u.y );
+  }
 
   void main() {
-    vec2 p = vWorld.xz + vec2(0.0, uTime * uFlow);
-    // Analytic ripple normal from a few summed waves
-    vec2 g = vec2(0.0);
-    g += vec2(0.8, 0.6) * cos(dot(p, vec2(0.8, 0.6)) * 0.9 + uTime * 1.3) * 0.9;
-    g += vec2(-0.5, 0.85) * cos(dot(p, vec2(-0.5, 0.85)) * 1.7 + uTime * 1.9) * 0.45;
-    g += vec2(0.3, -0.95) * cos(dot(p, vec2(0.3, -0.95)) * 3.1 + uTime * 2.6) * 0.22;
-    g += vec2(-0.9, -0.2) * cos(dot(p, vec2(-0.9, -0.2)) * 5.3 + uTime * 3.3) * 0.1;
-    vec3 n = normalize(vec3(-g.x * 0.08, 1.0, -g.y * 0.08));
-    vec3 v = normalize(cameraPosition - vWorld);
-    float fres = pow(1.0 - max(dot(n, v), 0.0), 4.0);
-    vec3 col = mix(uDeep, uShallow, 0.35 + 0.3 * n.x);
-    col = mix(col, uSky, clamp(fres * 0.9 + 0.08, 0.0, 1.0));
-    vec3 h = normalize(uSunDir + v);
-    float spec = pow(max(dot(n, h), 0.0), 220.0) * 2.5;
-    col += uSunColor * spec;
-    gl_FragColor = vec4(col, 0.86 + fres * 0.14);
+    vec2 p = vWorld.xz + vec2( 0.0, uTime * uFlow );
+    // Analytic ripple normal from a few summed waves + fine noise chop
+    vec2 g = vec2( 0.0 );
+    g += vec2( 0.8, 0.6 ) * cos( dot( p, vec2( 0.8, 0.6 ) ) * 0.9 + uTime * 1.3 ) * 0.9;
+    g += vec2( -0.5, 0.85 ) * cos( dot( p, vec2( -0.5, 0.85 ) ) * 1.7 + uTime * 1.9 ) * 0.45;
+    g += vec2( 0.3, -0.95 ) * cos( dot( p, vec2( 0.3, -0.95 ) ) * 3.1 + uTime * 2.6 ) * 0.22;
+    g += vec2( -0.9, -0.2 ) * cos( dot( p, vec2( -0.9, -0.2 ) ) * 5.3 + uTime * 3.3 ) * 0.1;
+    vec2 q = p * 2.2 + uTime * vec2( 0.3, 0.2 );
+    float e = 0.15;
+    float n0 = vnoise( q );
+    g += vec2( vnoise( q + vec2( e, 0.0 ) ) - n0, vnoise( q + vec2( 0.0, e ) ) - n0 ) / e * 0.08;
+    vec3 v = normalize( cameraPosition - vWorld );
+    float dist = length( cameraPosition - vWorld );
+    // flatten ripples with distance so the far lake doesn't alias
+    float chop = mix( 0.09, 0.025, smoothstep( 20.0, 400.0, dist ) );
+    vec3 n = normalize( vec3( -g.x * chop, 1.0, -g.y * chop ) );
+
+    float depth = max( vWorld.y - rfTerrainHeight( vWorld.xz ), 0.0 );
+    if ( uRfHeight.w < 0.5 ) depth = 4.0;
+    float depthK = 1.0 - exp( -depth * 0.35 );
+
+    float ndv = max( dot( n, v ), 0.0 );
+    float fres = 0.02 + 0.98 * pow( 1.0 - ndv, 5.0 );
+    vec3 r = reflect( -v, n );
+    r.y = abs( r.y );
+    vec3 refl = textureCube( tSky, r ).rgb;
+
+    float light = dot( uAmbient, vec3( 0.2126, 0.7152, 0.0722 ) ) + max( uSunDir.y, 0.0 ) * dot( uSunColor, vec3( 0.2126, 0.7152, 0.0722 ) ) * 0.25;
+    vec3 body = mix( uShallow, uDeep, depthK ) * light;
+    vec3 col = mix( body, refl, fres );
+
+    // sun glint (HDR so bloom picks it up)
+    vec3 h = normalize( uSunDir + v );
+    float spec = pow( max( dot( n, h ), 0.0 ), 600.0 ) * 40.0 + pow( max( dot( n, h ), 0.0 ), 80.0 ) * 0.6;
+    col += uSunColor * spec * step( 0.0, uSunDir.y );
+
+    // shoreline foam where the terrain approaches the surface
+    float fn = vnoise( vWorld.xz * 1.3 + uTime * vec2( 0.25, -0.2 ) ) * 0.6 + vnoise( vWorld.xz * 3.7 - uTime * 0.4 ) * 0.4;
+    float band = 1.0 - smoothstep( 0.0, 0.9, depth );
+    float wave = 0.5 + 0.5 * sin( depth * 9.0 - uTime * 2.2 + fn * 3.0 );
+    float foam = smoothstep( 0.35, 0.75, fn * band + band * 0.35 * wave ) * band;
+    col = mix( col, vec3( 0.9 ) * light * 1.1, foam * 0.85 );
+
+    float alpha = mix( mix( 0.25, 0.93, depthK ), 1.0, fres );
+    alpha = max( alpha, foam );
+    gl_FragColor = vec4( col, alpha );
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
@@ -52,7 +89,7 @@ const frag = /* glsl */ `
 `;
 
 function waterMaterial(flow: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const m = new THREE.ShaderMaterial({
     vertexShader: vert,
     fragmentShader: frag,
     transparent: true,
@@ -63,13 +100,17 @@ function waterMaterial(flow: number): THREE.ShaderMaterial {
         uTime: { value: 0 },
         uSunDir: { value: new THREE.Vector3(0.5, 0.8, 0.3).normalize() },
         uSunColor: { value: new THREE.Color('#fff1dc') },
-        uDeep: { value: new THREE.Color('#1c3a3c') },
-        uShallow: { value: new THREE.Color('#3f6a62') },
-        uSky: { value: new THREE.Color('#a9bccb') },
+        uDeep: { value: new THREE.Color('#0b2226') },
+        uShallow: { value: new THREE.Color('#3d6a5c') },
+        uAmbient: { value: new THREE.Color(0.5, 0.55, 0.6) },
         uFlow: { value: flow },
       },
     ]),
   });
+  // Shared by reference (textures must not go through UniformsUtils.merge)
+  m.uniforms.tSky = RenderGlobals.skyCube as THREE.IUniform;
+  Object.assign(m.uniforms, heightUniforms());
+  return m;
 }
 
 /** Reservoir planes + river ribbons. */
@@ -137,12 +178,13 @@ export class Water {
     }
   }
 
-  update(dt: number, sunDir: THREE.Vector3, sunColor: THREE.Color, sky: THREE.Color): void {
+  /** Sun + ambient come from RenderGlobals (set by DayNight); params kept for API compatibility. */
+  update(dt: number, _sunDir?: THREE.Vector3, _sunColor?: THREE.Color, _sky?: THREE.Color): void {
     for (const m of this.materials) {
       m.uniforms.uTime.value += dt;
-      m.uniforms.uSunDir.value.copy(sunDir);
-      m.uniforms.uSunColor.value.copy(sunColor);
-      m.uniforms.uSky.value.copy(sky);
+      m.uniforms.uSunDir.value.copy(RenderGlobals.sunDir);
+      m.uniforms.uSunColor.value.copy(RenderGlobals.sunColor);
+      m.uniforms.uAmbient.value.copy(RenderGlobals.ambientUp);
     }
   }
 }
