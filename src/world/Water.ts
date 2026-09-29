@@ -95,6 +95,23 @@ export class Water {
       scene.add(mesh);
     }
 
+    // W4: open sea east of the coastline, out to the horizon
+    if (def.coast) {
+      const seaMat = waterMaterial(0);
+      seaMat.uniforms.uDeep.value.set('#15313d');
+      seaMat.uniforms.uShallow.value.set('#2f6670');
+      this.materials.push(seaMat);
+      const x0 = def.coast.shore - def.coast.wobble - 80;
+      const x1 = def.size / 2 + 3000;
+      const zl = def.size + 6000;
+      const geo = new THREE.PlaneGeometry(x1 - x0, zl, 64, 64);
+      geo.rotateX(-Math.PI / 2);
+      const sea = new THREE.Mesh(geo, seaMat);
+      sea.position.set((x0 + x1) / 2, def.waterLevel, 0);
+      sea.renderOrder = 1;
+      scene.add(sea);
+    }
+
     const riverMat = waterMaterial(-1.4);
     this.materials.push(riverMat);
     for (const river of def.rivers) {

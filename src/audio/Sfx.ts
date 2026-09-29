@@ -164,6 +164,90 @@ class SfxEngine {
     this.vol = 1;
     this.burst({ freq: 1200, type: 'bandpass', q: 2, decay: 0.08, gain: 0.2 });
   }
+  // ---------------------------------------------------------------- W4: new units, throwables, weather
+  laserCharge(pos: THREE.Vector3, dur = 1): void {
+    if (!this.at(pos, 30)) return;
+    this.tone({ freq: 220, to: 1400, type: 'sawtooth', decay: dur, gain: 0.12 });
+  }
+  laserFire(pos: THREE.Vector3, dur = 1.4): void {
+    if (!this.at(pos, 35)) return;
+    this.tone({ freq: 90, to: 70, type: 'sawtooth', decay: dur, gain: 0.25 });
+    this.burst({ freq: 2400, type: 'bandpass', q: 2, decay: dur, gain: 0.25 });
+  }
+  stomp(pos: THREE.Vector3, size = 1): void {
+    if (!this.at(pos, 25 * size)) return;
+    this.tone({ freq: 60 / Math.sqrt(size), to: 25, decay: 0.5 * size, gain: 0.7 });
+    this.burst({ freq: 300, decay: 0.35 * size, gain: 0.5 });
+  }
+  servo(pos: THREE.Vector3): void {
+    if (!this.at(pos, 10)) return;
+    this.tone({ freq: 380, to: 520, type: 'square', decay: 0.12, gain: 0.05 });
+  }
+  mortar(pos: THREE.Vector3): void {
+    if (!this.at(pos, 60)) return;
+    this.tone({ freq: 140, to: 50, decay: 0.3, gain: 0.6 });
+    this.burst({ freq: 900, decay: 0.25, gain: 0.5 });
+  }
+  incoming(pos: THREE.Vector3): void {
+    if (!this.at(pos, 30)) return;
+    this.tone({ freq: 2200, to: 500, type: 'sine', decay: 0.9, gain: 0.12 });
+  }
+  throwItem(): void {
+    this.vol = 1;
+    this.burst({ freq: 900, type: 'bandpass', q: 1.5, decay: 0.12, gain: 0.25 });
+  }
+  bounce(pos: THREE.Vector3): void {
+    if (!this.at(pos, 8)) return;
+    this.burst({ freq: 1600, type: 'bandpass', q: 4, decay: 0.05, gain: 0.3 });
+  }
+  emp(pos: THREE.Vector3): void {
+    if (!this.at(pos, 30)) return;
+    this.tone({ freq: 1800, to: 60, type: 'sawtooth', decay: 0.7, gain: 0.35 });
+    this.burst({ freq: 5000, type: 'highpass', decay: 0.4, gain: 0.3 });
+  }
+  smokePop(pos: THREE.Vector3): void {
+    if (!this.at(pos, 15)) return;
+    this.burst({ freq: 700, decay: 1.2, gain: 0.35 });
+  }
+  decoyPing(pos: THREE.Vector3): void {
+    if (!this.at(pos, 30)) return;
+    this.tone({ freq: 1300, type: 'square', decay: 0.1, gain: 0.12 });
+    this.burst({ freq: 1500, type: 'bandpass', q: 2, decay: 0.12, gain: 0.3, delay: 0.12 });
+  }
+  mineArm(pos: THREE.Vector3): void {
+    if (!this.at(pos, 12)) return;
+    this.tone({ freq: 2600, type: 'square', decay: 0.05, gain: 0.1 });
+  }
+  /** Thunder clap, delayed by distance (speed of sound). */
+  thunder(dist: number): void {
+    this.vol = 1;
+    const delay = Math.min(dist / 343, 6);
+    const g = Math.max(0.25, 1 - dist / 2500);
+    this.burst({ freq: 180, decay: 2.6, gain: 0.9 * g, delay });
+    this.tone({ freq: 55, to: 30, decay: 2.2, gain: 0.6 * g, delay });
+    this.burst({ freq: 900, decay: 0.6, gain: 0.4 * g, delay: delay + 0.05 });
+  }
+  private rainSrc: AudioBufferSourceNode | null = null;
+  private rainGain: GainNode | null = null;
+  /** Continuous rain bed, 0 = off. */
+  setRain(level: number): void {
+    if (!this.ok) return;
+    const ctx = this.ctx!;
+    if (!this.rainSrc && level > 0) {
+      this.rainSrc = ctx.createBufferSource();
+      this.rainSrc.buffer = this.noise;
+      this.rainSrc.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 2500;
+      f.Q.value = 0.4;
+      this.rainGain = ctx.createGain();
+      this.rainGain.gain.value = 0;
+      this.rainSrc.connect(f).connect(this.rainGain).connect(this.master!);
+      this.rainSrc.start();
+    }
+    if (this.rainGain) this.rainGain.gain.setTargetAtTime(level * 0.22, ctx.currentTime, 0.5);
+  }
 }
 
 export const Sfx = new SfxEngine();

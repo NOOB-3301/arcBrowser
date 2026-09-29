@@ -49,6 +49,8 @@ export function generateTerrain(def: MapDef): GenResult {
   const clear = new Uint8Array(N);
   const riverD = new Float32Array(N).fill(1e9);
   const riverBed = new Float32Array(N);
+  const coastSand = new Float32Array(N); // W4: beach/dune sand weight
+  const shoreAt = def.coast ? makeShore(def) : null; // W4
 
   // ---------------------------------------------------------------- base + rim + hills
   for (let iz = 0; iz < n; iz++) {
@@ -58,14 +60,61 @@ export function generateTerrain(def: MapDef): GenResult {
       let h = b.baseHeight + noise.fbm(x / b.hillScale, z / b.hillScale, 5) * b.hillAmp;
       h += (noise.ridged(x / 700 + 11, z / 700 - 7, 4) - 0.35) * b.ridgeAmp;
       h += detail.fbm(x / 40, z / 40, 3) * 0.8;
-      const edge = hm.half - Math.max(Math.abs(x), Math.abs(z));
-      const r = smooth(b.rimWidth, 0, edge);
+      // W4: coast maps have no rim on the sea side, and the rim fades out toward the sea
+      const edge = hm.half - (shoreAt ? Math.max(-x, Math.abs(z)) : Math.max(Math.abs(x), Math.abs(z)));
+      let r = smooth(b.rimWidth, 0, edge);
+      if (shoreAt) r *= smooth(shoreAt(z) + 40, shoreAt(z) - 160, x);
       h += b.rimHeight * r * r * (0.7 + 0.3 * noise.noise(x / 160, z / 160));
       for (const hill of def.hills) {
         const d = Math.hypot(x - hill.center[0], z - hill.center[1]);
         if (d < hill.radius) h += hill.height * (0.5 + 0.5 * Math.cos((Math.PI * d) / hill.radius));
       }
       H[iz * n + ix] = h;
+    }
+  }
+
+  // ---------------------------------------------------------------- W4: coast (beach, dunes, cliffs, sea floor)
+  if (def.coast && shoreAt) {
+    const c = def.coast;
+    const sea = def.waterLevel;
+    for (let iz = 0; iz < n; iz++) {
+      const z = hm.wz(iz);
+      const s = shoreAt(z);
+      let cliff = 0;
+      for (const cl of c.cliffs) cliff = Math.max(cliff, smooth(cl.z0 - 40, cl.z0 + 20, z) * smooth(cl.z1 + 40, cl.z1 - 20, z));
+      const cliffH = c.cliffs.reduce((m, cl) => Math.max(m, cl.height), 0);
+      for (let ix = 0; ix < n; ix++) {
+        const x = hm.wx(ix);
+        const u = x - s; // + = seaward
+        if (u < -c.beach - 260) continue;
+        const i = iz * n + ix;
+        const land = H[i];
+        const seaT = lerp(sea - 0.8, c.seaFloor, smooth(0, c.shelf, u));
+        // Beach profile: land eases down to a gentle sand slope at the waterline
+        let beachH: number;
+        if (u >= 0) beachH = seaT;
+        else {
+          const sandH = sea + 0.4 + -u * 0.05 + detail.fbm(x / 25, z / 25, 2) * 0.3;
+          beachH = lerp(land, Math.min(land, sandH), smooth(-c.beach * 1.6, -c.beach * 0.35, u));
+          // Dunes behind the beach
+          const band = smooth(-c.beach - 200, -c.beach - 60, u) * smooth(-c.beach * 0.2, -c.beach * 0.7, u);
+          beachH += band * c.dunes * Math.max(0, noise.ridged(x / 55 + 3, z / 38 - 5, 3) - 0.25);
+        }
+        // Cliff profile: raised plateau that drops sharply into the sea
+        const plateau = land + cliffH * smooth(-240, -70, u);
+        const cliffProfile = u < -10 ? plateau : lerp(plateau, Math.min(seaT, sea - 2.5), smooth(-10, 7, u));
+        H[i] = lerp(beachH, cliffProfile, cliff);
+        if (u > -8 && H[i] < sea + 0.4) hm.wet[i] = 255;
+        coastSand[i] = (1 - cliff) * smooth(-c.beach - 200, -c.beach * 0.7, u);
+      }
+    }
+    // Sandy areas inland (buried city): sand splat + drifts
+    for (const a of c.sandy) {
+      const [cx, cz] = a.center;
+      forBox(hm, cx - a.radius, cz - a.radius, cx + a.radius, cz + a.radius, (i, x, z) => {
+        const d = Math.hypot(x - cx, z - cz) / a.radius + noise.noise(x / 50, z / 50) * 0.2;
+        coastSand[i] = Math.max(coastSand[i], smooth(1, 0.6, d));
+      });
     }
   }
 
@@ -204,6 +253,7 @@ export function generateTerrain(def: MapDef): GenResult {
 
       let rock = smooth(0.14, 0.3, slope) + smooth(70, 110, h) * 0.5;
       let sand = wet * smooth(def.waterLevel + 3.5, def.waterLevel + 0.5, h) + wet * (riverD[i] < 30 ? 0.8 : 0);
+      sand += coastSand[i] * 2.5; // W4: beaches, dunes, buried city
       let dirt = Math.max(0, noise.fbm(x / 70 + 3, z / 70, 3) * 1.4 - 0.15) * 0.7;
       let asphalt = roadAsphalt[i];
       let concrete = 0;
@@ -234,6 +284,7 @@ export function generateTerrain(def: MapDef): GenResult {
       S[o + 4] = (asphalt / total) * 255;
       S[o + 5] = (concrete / total) * 255;
       if (slope > 0.35) clear[i] = 1;
+      if (coastSand[i] > 0.8 && hash01(ix, iz) > 0.02) clear[i] = 1; // W4: almost no trees on open sand
     }
   }
 
@@ -241,6 +292,22 @@ export function generateTerrain(def: MapDef): GenResult {
 }
 
 // -------------------------------------------------------------------- helpers
+
+/** W4: shoreline x at z for a coast map (sea on +x). */
+export function makeShore(def: MapDef): (z: number) => number {
+  const c = def.coast!;
+  const nz = new Simplex(def.seed + 31);
+  return (z: number) => {
+    let s = c.shore + nz.fbm(z / 220, 0.5, 3) * c.wobble;
+    for (const h of c.headlands) s += h.reach * Math.exp(-(((z - h.z) / h.width) ** 2));
+    return s;
+  };
+}
+
+function hash01(x: number, z: number): number {
+  const h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+  return h - Math.floor(h);
+}
 
 function forBox(hm: Heightmap, x0: number, z0: number, x1: number, z1: number, fn: (i: number, x: number, z: number) => void): void {
   const n = hm.n;
