@@ -14,6 +14,7 @@ import type { CameraRig } from '../camera/CameraRig';
 import type { PlayerController } from './PlayerController';
 import type { Animator, CombatPose } from './Animator';
 import { Sfx } from '../audio/Sfx';
+import type { MedEffect } from '../loot/Items'; // W3
 
 const HEAD: HitZone = { kind: 'head', multiplier: 1.5 };
 const BODY: HitZone = { kind: 'body', multiplier: 1 };
@@ -31,7 +32,8 @@ export class PlayerCombat implements Damageable {
   readonly faction = 'player';
   readonly surface: Surface = 'flesh';
   readonly health = new Health(100, 60, 0.6);
-  readonly pouch = new AmmoPouch();
+  // W3: assignable so the raid can swap in an inventory-backed pouch
+  pouch = new AmmoPouch();
   readonly slots: Weapon[] = [];
   active = 0;
   /** Seconds since last shot (drives hip-fire pose / facing). */
@@ -39,6 +41,12 @@ export class PlayerCombat implements Damageable {
   /** Current spread cone (degrees) for the crosshair. */
   spreadDeg = 0;
   healingT = -1;
+  // W3: raid hooks — no auto-respawn in raids, med items, empty weapon slots
+  autoRespawn = true;
+  /** Picks + consumes a med item; null = nothing useful to use. Unset = legacy free heal. */
+  medProvider: (() => MedEffect | null) | null = null;
+  readonly empty = [false, false];
+  private med: (MedEffect & { t: number }) | null = null;
 
   private models: THREE.Group[] = [];
   private recoil = new Recoil();
@@ -95,18 +103,28 @@ export class PlayerCombat implements Damageable {
   equip(slot: number, id: string, rarity: Rarity): void {
     const def = WEAPONS[id];
     if (!def) return;
+    this.empty[slot] = false; // W3
     this.slots[slot] = new Weapon(def, rarity);
     this.models[slot] = buildWeaponModel(def, rarity);
     if (slot === this.active) this.animator.setWeapon(this.models[slot]);
+  }
+
+  // W3: empty slot keeps a placeholder Weapon (HUD safety) but can't fire and has no model
+  unequip(slot: number): void {
+    if (!this.slots[slot]) this.equip(slot, 'pip', 'common');
+    this.empty[slot] = true;
+    this.slots[slot].cancelReload();
+    if (slot === this.active) this.animator.setWeapon(null);
   }
 
   selectSlot(i: number, instant = false): void {
     if (i === this.active && !instant) return;
     this.weapon?.cancelReload();
     this.active = i;
-    this.animator.setWeapon(this.models[i]);
+    this.animator.setWeapon(this.empty[i] ? null : this.models[i]); // W3
     this.swapTotal = this.swapT = instant ? 0 : this.weapon.def.swapTime;
     this.healingT = -1;
+    this.med = null; // W3
     if (!instant) Sfx.swap();
     Events.emit('weapon:equipped', { weapon: this.weapon });
   }
@@ -128,6 +146,7 @@ export class PlayerCombat implements Damageable {
     Sfx.hurt();
     Events.emit('player:hurt', { amount: r.dealt, from: r.source.origin });
     this.healingT = -1;
+    this.med = null; // W3
     if (!this.health.alive) this.die();
   }
 
@@ -154,7 +173,7 @@ export class PlayerCombat implements Damageable {
 
     if (!this.health.alive) {
       this.deadT -= dt;
-      if (this.deadT <= 0) this.respawn();
+      if (this.deadT <= 0 && this.autoRespawn) this.respawn(); // W3
       return;
     }
 
@@ -170,7 +189,7 @@ export class PlayerCombat implements Damageable {
         const label = w.cycleMode();
         if (label) Events.emit('toast', `${w.def.name}: ${label}`);
       }
-      if (input.pressed('reload') && !busy && this.swapT <= 0) w.startReload(this.pouch);
+      if (input.pressed('reload') && !busy && this.swapT <= 0 && !this.empty[this.active]) w.startReload(this.pouch); // W3: empty-slot guard
       if (input.pressed('heal')) this.tryHeal();
       if (input.pressed('fire') && p.locomotion === 'sprint') {
         p.breakSprint();
@@ -183,8 +202,22 @@ export class PlayerCombat implements Damageable {
 
     // Healing (interrupted by firing / sprinting / taking damage)
     if (this.healingT >= 0) {
-      if ((active && input.down('fire')) || p.locomotion === 'sprint' || busy) this.healingT = -1;
-      else {
+      if ((active && input.down('fire')) || p.locomotion === 'sprint' || busy) {
+        this.healingT = -1;
+        this.med = null; // W3
+      } else if (this.med) {
+        // W3: med item applied over its duration
+        const m = this.med;
+        const k = Math.min(dt, m.time - m.t) / m.time;
+        this.health.heal(m.hp * k);
+        this.health.rechargeShield(m.shield * k);
+        m.t += dt;
+        this.healingT = Math.min(1, m.t / m.time) * HEAL_TIME;
+        if (m.t >= m.time) {
+          this.med = null;
+          this.healingT = -1;
+        }
+      } else {
         this.healingT += dt;
         if (this.healingT >= HEAL_TIME) {
           this.health.heal(HEAL_AMOUNT);
@@ -200,7 +233,7 @@ export class PlayerCombat implements Damageable {
     this.rig.adsTime = w.def.adsTime * (1 + heavy * 0.05);
     p.speedMult = 1 - heavy * 0.012;
 
-    const canFire = active && !busy && this.swapT <= 0 && this.sprintFireDelay <= 0 && this.healingT < 0 && p.locomotion !== 'sprint';
+    const canFire = !this.empty[this.active] && active && !busy && this.swapT <= 0 && this.sprintFireDelay <= 0 && this.healingT < 0 && p.locomotion !== 'sprint'; // W3
     const shots = w.update(
       dt,
       { down: active && input.down('fire'), pressed: active && input.pressed('fire'), released: active && input.released('fire'), canFire },
@@ -272,6 +305,16 @@ export class PlayerCombat implements Damageable {
   }
 
   private tryHeal(): void {
+    // W3: raid meds come from the inventory
+    if (this.medProvider) {
+      if (this.healingT >= 0) return;
+      const m = this.medProvider();
+      if (!m) return;
+      this.weapon.cancelReload();
+      this.med = { ...m, t: 0 };
+      this.healingT = 0;
+      return;
+    }
     if (this.health.hp >= this.health.maxHp || this.healingT >= 0) return;
     this.weapon.cancelReload();
     this.healingT = 0;
@@ -280,10 +323,11 @@ export class PlayerCombat implements Damageable {
   private die(): void {
     this.deadT = 3;
     this.healingT = -1;
+    this.med = null; // W3
     Events.emit('player:died', {});
   }
 
-  private respawn(): void {
+  respawn(): void { // W3: public so the raid can reset the player
     this.health.reset();
     this.player.teleport(this.spawn);
     for (const w of this.slots) {

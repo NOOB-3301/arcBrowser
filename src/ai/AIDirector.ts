@@ -199,7 +199,9 @@ export class AIDirector {
       b.focusDist = b.pos.distanceTo(focus);
       if (!b.health.alive) {
         b.deadT += dt;
-        if (b.deadT > CORPSE_TIME || (b.kind === 'tick' && b.deadT > 4)) {
+        // W3: lootable corpses (flagged by the loot system) persist for the raid
+        const pinned = (b as { lootPinned?: boolean }).lootPinned === true;
+        if (!pinned && (b.deadT > CORPSE_TIME || (b.kind === 'tick' && b.deadT > 4))) {
           b.dispose();
           this.bots.splice(i, 1);
           continue;
