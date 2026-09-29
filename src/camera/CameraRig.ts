@@ -8,7 +8,7 @@ import type { PlayerController } from '../player/PlayerController';
 /** Spring-arm framing presets. dist = boom length, side = shoulder offset, up = extra height. */
 const FRAME = {
   hip: { dist: 2.6, side: 0.78, up: 0.16 },
-  ads: { dist: 1.65, side: 0.92, up: 0.14 },
+  ads: { dist: 1.9, side: 1.0, up: 0.22 },
   sprint: { dist: 3.0, side: 0.65, up: 0.12 },
   crouch: { dist: 2.3, side: 0.75, up: 0.25 },
 };
@@ -51,6 +51,11 @@ export class CameraRig {
   private sprintBlend = 0;
   private crouchBlend = 0;
   private initialised = false;
+  /** Current weapon magnification and ADS time (set by combat). */
+  zoom = 1.3;
+  adsTime = 0.25;
+  /** True while looking through a high-magnification scope. */
+  scoped = false;
 
   constructor(private camera: THREE.PerspectiveCamera, private physics: Physics) {
     this.fov = Settings.get('fov');
@@ -66,11 +71,13 @@ export class CameraRig {
   }
 
   /** Per-frame look + mode input. Call before player.frameInput. */
-  handleInput(input: Input, dt: number, aiming: boolean): void {
+  handleInput(input: Input, dt: number, aiming: boolean, assist?: { sensScale: number; yaw: number; pitch: number }): void {
     if (input.pressed('swapShoulder')) this.shoulder *= -1;
     if (input.pressed('toggleView')) this.firstPerson = !this.firstPerson;
 
-    const sens = 1 - this.ads * (1 - Settings.get('adsSensitivityMultiplier'));
+    // Higher zoom → proportionally slower look so aim feels consistent
+    const zoomSens = 1 / Math.max(1, Math.pow(this.zoom, 0.6 * this.ads));
+    const sens = (1 - this.ads * (1 - Settings.get('adsSensitivityMultiplier'))) * zoomSens * (assist?.sensScale ?? 1);
     const lx = input.lookX * sens;
     const ly = input.lookY * sens;
 
@@ -82,6 +89,10 @@ export class CameraRig {
     } else {
       this.yaw -= lx;
       this.pitch = THREE.MathUtils.clamp(this.pitch - ly, PITCH_MIN, PITCH_MAX);
+      if (assist) {
+        this.yaw += assist.yaw;
+        this.pitch = THREE.MathUtils.clamp(this.pitch + assist.pitch, PITCH_MIN, PITCH_MAX);
+      }
       // Ease free-look back to centre
       const k = 1 - Math.exp(-10 * dt);
       this.freeLookYaw -= this.freeLookYaw * k;
@@ -107,7 +118,9 @@ export class CameraRig {
 
     // --- blends
     const canAds = aimingInput && player.state !== 'roll' && player.state !== 'ladder' && player.state !== 'zipline' && player.state !== 'mantle';
-    this.ads += ((canAds ? 1 : 0) - this.ads) * damp(14);
+    // ADS speed from weapon handling: ~95% blended after adsTime
+    this.ads += ((canAds ? 1 : 0) - this.ads) * damp(3 / Math.max(0.08, this.adsTime));
+    this.scoped = this.zoom >= 3 && this.ads > 0.85 && !this.firstPerson;
     this.sprintBlend += ((player.locomotion === 'sprint' ? 1 : 0) - this.sprintBlend) * damp(5);
     this.crouchBlend += ((player.crouched && player.state !== 'roll' ? 1 : 0) - this.crouchBlend) * damp(9);
     this.shoulderBlend += (this.shoulder - this.shoulderBlend) * damp(10);
@@ -173,13 +186,14 @@ export class CameraRig {
       this.camera.position.copy(shoulderPt).addScaledVector(back, this.armLength);
       this.camera.quaternion.copy(q);
 
-      // Fade the character if camera is inside it
-      if (playerMesh) playerMesh.visible = this.armLength > 0.55;
+      // Hide the character if the camera is inside it, or when scoped in
+      if (playerMesh) playerMesh.visible = this.armLength > 0.55 && !this.scoped;
     }
 
     // --- FOV
     const baseFov = Settings.get('fov');
-    const targetFov = baseFov * (1 - 0.25 * this.ads) + 7 * this.sprintBlend * (1 - this.ads);
+    const adsFov = baseFov / this.zoom;
+    const targetFov = THREE.MathUtils.lerp(baseFov, adsFov, this.ads) + 7 * this.sprintBlend * (1 - this.ads);
     this.fov += (targetFov - this.fov) * damp(10);
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;

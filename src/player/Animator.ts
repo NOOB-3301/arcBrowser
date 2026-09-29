@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import type { PlayerController } from './PlayerController';
 
+/** Weapon-driven pose inputs. reload: -1 idle or 0..1 progress; swap/kick 0..1. */
+export interface CombatPose {
+  reload: number;
+  swap: number;
+  kick: number;
+}
+const NO_POSE: CombatPose = { reload: -1, swap: 0, kick: 0 };
+
 /**
  * Blocky raider mannequin with procedural animation. Stand-in until the rigged
  * GLB character lands in M7; the controller-facing API (update) stays the same.
@@ -25,13 +33,15 @@ export class Animator {
   private crouch = 0;
   private aimBlend = 0;
   private yaw = 0;
+  private gunMount = new THREE.Group();
+  private weapon: THREE.Object3D | null = null;
+  private _m = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     const suit = new THREE.MeshStandardMaterial({ color: '#c9a36a', roughness: 0.85 });
     const dark = new THREE.MeshStandardMaterial({ color: '#3b3a36', roughness: 0.9 });
     const accent = new THREE.MeshStandardMaterial({ color: '#e0662a', roughness: 0.6 });
     const visor = new THREE.MeshStandardMaterial({ color: '#1a2226', roughness: 0.2, metalness: 0.6 });
-    const gunMat = new THREE.MeshStandardMaterial({ color: '#2a2c2e', roughness: 0.5, metalness: 0.5 });
 
     const box = (w: number, h: number, d: number, m: THREE.Material, y = 0, z = 0, x = 0) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
@@ -66,14 +76,10 @@ export class Animator {
       fore.position.y = -0.32;
       fore.add(box(0.11, 0.3, 0.11, dark, -0.15));
     }
-    // Placeholder rifle in right hand
-    const gun = new THREE.Group();
-    gun.add(box(0.07, 0.12, 0.7, gunMat, 0, -0.2));
-    gun.add(box(0.05, 0.14, 0.08, gunMat, -0.1, 0.02));
-    gun.add(box(0.03, 0.03, 0.2, accent, 0.07, -0.25));
-    gun.position.set(0, -0.3, 0);
-    gun.rotation.x = -Math.PI / 2;
-    this.foreR.add(gun);
+    // Weapon mount in right hand: models are built along -Z, mount aligns that with the forearm
+    this.gunMount.position.set(0, -0.3, 0);
+    this.gunMount.rotation.x = -Math.PI / 2;
+    this.foreR.add(this.gunMount);
 
     for (const [thigh, shin, x] of [[this.thighL, this.shinL, -0.11], [this.thighR, this.shinR, 0.11]] as const) {
       this.hips.add(thigh);
@@ -88,7 +94,23 @@ export class Animator {
     scene.add(this.root);
   }
 
-  update(dt: number, p: PlayerController, camPitch: number): void {
+  setWeapon(model: THREE.Object3D | null): void {
+    if (this.weapon) this.gunMount.remove(this.weapon);
+    this.weapon = model;
+    if (model) this.gunMount.add(model);
+  }
+
+  /** World-space muzzle position of the held weapon (falls back to chest). */
+  muzzleWorld(out = new THREE.Vector3()): THREE.Vector3 {
+    const m = this.weapon?.userData.muzzle as THREE.Object3D | undefined;
+    if (m) {
+      this.root.updateMatrixWorld(true);
+      return m.getWorldPosition(out);
+    }
+    return out.copy(this.root.position).add(this._m.set(0, 1.4, 0));
+  }
+
+  update(dt: number, p: PlayerController, camPitch: number, pose: CombatPose = NO_POSE): void {
     const damp = (r: number) => 1 - Math.exp(-r * dt);
     const feet = p.renderFeet();
     this.root.position.copy(feet);
@@ -103,7 +125,8 @@ export class Animator {
     const state = p.state;
     const crouchTarget = p.crouched && state !== 'roll' && state !== 'mantle' ? 1 : 0;
     this.crouch += (crouchTarget - this.crouch) * damp(12);
-    this.aimBlend += ((p.aiming && state === 'ground' ? 1 : 0) - this.aimBlend) * damp(14);
+    const canAim = state === 'ground' || state === 'air' || state === 'slide';
+    this.aimBlend += ((p.aiming && canAim && pose.reload < 0 ? 1 : 0) - this.aimBlend) * damp(16);
     // Sign convention: +X rotation swings a limb forward (toward -Z); torso lean forward is -X.
     const leanTarget = state === 'slide' ? 0.45 : p.locomotion === 'sprint' ? -0.32 : p.locomotion === 'jog' ? -0.12 : 0;
     this.lean += (leanTarget - this.lean) * damp(8);
@@ -200,5 +223,16 @@ export class Animator {
         this.shinR.rotation.x = -0.4;
         break;
     }
+
+    // Combat overlays: reload, swap, recoil kick
+    if (pose.reload >= 0 && canAim) {
+      const wob = Math.sin(pose.reload * Math.PI * 4) * 0.15;
+      this.armR.rotation.x = 0.6;
+      this.foreR.rotation.x = 0.9;
+      this.armL.rotation.set(0.9 + wob, 0, 0.5);
+      this.foreL.rotation.x = 1.3;
+    }
+    this.gunMount.rotation.x = -Math.PI / 2 + pose.swap * 1.3;
+    if (this.weapon) this.weapon.position.z = pose.kick * 0.09;
   }
 }

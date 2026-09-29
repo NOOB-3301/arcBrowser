@@ -2,6 +2,7 @@ import { Events } from '../core/Events';
 import type { Button, Input } from '../core/Input';
 import type { InputMode } from '../core/Settings';
 import { glyph } from './Glyphs';
+import { Sfx } from '../audio/Sfx';
 import type { PlayerController } from '../player/PlayerController';
 import type { CameraRig } from '../camera/CameraRig';
 
@@ -17,6 +18,11 @@ const PROMPTS: [Button, string][] = [
   ['crouch', 'Crouch / Slide'],
   ['dodge', 'Dodge roll'],
   ['ads', 'Aim'],
+  ['fire', 'Fire'],
+  ['reload', 'Reload'],
+  ['fireMode', 'Fire mode / Ammo'],
+  ['swapWeapon', 'Swap weapon'],
+  ['heal', 'Heal'],
   ['swapShoulder', 'Swap shoulder'],
   ['freeLook', 'Free look'],
   ['interact', 'Zipline / Ladder'],
@@ -30,14 +36,13 @@ export class HUD {
   private overlay: HTMLElement;
   private debug: HTMLElement;
   private toastTimer = 0;
-  private crosshair: HTMLElement;
   private staminaEl: HTMLElement;
   private staminaFill: HTMLElement;
 
   constructor(private input: Input) {
     this.root = document.getElementById('ui')!;
     this.root.innerHTML = `
-      <div class="hud-tag">RUSTFALL <span>M2 · movement + camera</span></div>
+      <div class="hud-tag">RUSTFALL <span>M3 · weapons + combat</span></div>
       <div class="hud-mode"></div>
       <div class="crosshair"><i></i><i></i><i></i><i></i></div>
       <div class="stamina"><div class="stamina-fill"></div></div>
@@ -56,11 +61,15 @@ export class HUD {
     this.toast = this.root.querySelector('.hud-toast')!;
     this.overlay = this.root.querySelector('.overlay')!;
     this.debug = this.root.querySelector('.hud-debug')!;
-    this.crosshair = this.root.querySelector('.crosshair')!;
     this.staminaEl = this.root.querySelector('.stamina')!;
     this.staminaFill = this.root.querySelector('.stamina-fill')!;
 
-    this.overlay.addEventListener('click', () => input.requestPointerLock());
+    this.overlay.addEventListener('click', () => {
+      Sfx.unlock();
+      input.requestPointerLock();
+    });
+    Events.on('toast', (t: string) => this.showToast(t));
+    Events.on('player:died', () => this.showToast('You are down'));
     Events.on('input:pointerlock', () => this.refreshOverlay());
     Events.on('input:device', () => {
       this.refresh();
@@ -91,10 +100,6 @@ export class HUD {
     this.staminaFill.style.width = `${(st.fraction * 100).toFixed(1)}%`;
     this.staminaEl.classList.toggle('exhausted', st.exhausted);
 
-    // Crosshair spread: tight when ADS, wide when sprinting/airborne
-    const spread = rig.ads > 0.5 ? 4 : player.locomotion === 'sprint' || !player.grounded ? 22 : 12;
-    this.crosshair.style.setProperty('--spread', `${spread}px`);
-    this.crosshair.style.opacity = player.locomotion === 'sprint' || player.state === 'roll' ? '0.25' : '1';
 
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;

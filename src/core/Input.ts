@@ -10,7 +10,8 @@ import { Settings, type InputMode } from './Settings';
 export type Button =
   | 'fire' | 'ads' | 'sprint' | 'crouch' | 'jump' | 'reload' | 'interact'
   | 'swapWeapon' | 'throwable' | 'melee' | 'dodge' | 'heal' | 'swapShoulder'
-  | 'freeLook' | 'inventory' | 'map' | 'pause' | 'toggleView';
+  | 'freeLook' | 'inventory' | 'map' | 'pause' | 'toggleView'
+  | 'fireMode' | 'slot1' | 'slot2';
 
 export type Device = 'kbm' | 'gamepad';
 export type PadStyle = 'xbox' | 'ps' | 'generic';
@@ -19,6 +20,7 @@ const BUTTONS: Button[] = [
   'fire', 'ads', 'sprint', 'crouch', 'jump', 'reload', 'interact',
   'swapWeapon', 'throwable', 'melee', 'dodge', 'heal', 'swapShoulder',
   'freeLook', 'inventory', 'map', 'pause', 'toggleView',
+  'fireMode', 'slot1', 'slot2',
 ];
 
 // ---- Keyboard + mouse bindings (KeyboardEvent.code / 'Mouse<n>' / 'Wheel') ----
@@ -30,7 +32,7 @@ export const KBM_BINDINGS: Record<Button, string[]> = {
   jump: ['Space'],
   reload: ['KeyR'],
   interact: ['KeyF'],
-  swapWeapon: ['Digit1', 'Digit2', 'Wheel'],
+  swapWeapon: ['Wheel'],
   throwable: ['KeyG'],
   melee: ['KeyV'],
   dodge: ['ControlLeft'],
@@ -41,6 +43,9 @@ export const KBM_BINDINGS: Record<Button, string[]> = {
   map: ['KeyM'],
   pause: ['KeyP'],
   toggleView: ['F5'],
+  fireMode: ['KeyB'],
+  slot1: ['Digit1'],
+  slot2: ['Digit2'],
 };
 
 // ---- Gamepad bindings (W3C "standard" mapping button indices) ----
@@ -62,7 +67,10 @@ export const PAD_BINDINGS: Record<Button, number[]> = {
   dodge: [PAD.RB],
   heal: [PAD.UP],
   swapShoulder: [PAD.RIGHT],
-  freeLook: [PAD.LEFT],
+  freeLook: [], // D← hold
+  fireMode: [], // D← tap
+  slot1: [],
+  slot2: [],
   inventory: [PAD.DOWN],
   map: [PAD.VIEW],
   pause: [PAD.MENU],
@@ -105,6 +113,7 @@ export class Input {
   private padPrev: boolean[] = [];
   private xHeld = 0;
   private xHoldFired = false;
+  private leftHeld = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     for (const b of BUTTONS) this.state.set(b, { down: false, pressed: false, released: false });
@@ -201,6 +210,14 @@ export class Input {
         if (this.padPrev[PAD.X] && !this.xHoldFired) edgePressed.add('reload');
         this.xHeld = 0;
         this.xHoldFired = false;
+      }
+      // D←: tap = fire mode, hold = free look
+      if (pressedNow[PAD.LEFT]) {
+        this.leftHeld += dt;
+        if (this.leftHeld >= X_HOLD_TIME) nowDown.set('freeLook', true);
+      } else {
+        if (this.padPrev[PAD.LEFT] && this.leftHeld < X_HOLD_TIME) edgePressed.add('fireMode');
+        this.leftHeld = 0;
       }
       this.padPrev = pressedNow;
     }

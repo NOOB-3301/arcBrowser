@@ -13,6 +13,16 @@ import { Animator } from '../player/Animator';
 import { CameraRig } from '../camera/CameraRig';
 import { Traversal } from '../world/Traversal';
 import { Tuning } from '../player/MovementStates';
+import { DamageRegistry } from '../combat/Damage';
+import { Effects } from '../combat/Effects';
+import { AimAssist } from '../combat/AimAssist';
+import { Ballistics } from '../weapons/Ballistics';
+import { WEAPONS, RARITY, type Rarity } from '../weapons/WeaponDefs';
+import { PlayerCombat } from '../player/PlayerCombat';
+import { TargetRange } from '../world/TargetRange';
+import { CombatHUD } from '../ui/CombatHUD';
+import { Sfx } from '../audio/Sfx';
+import { FIXED_DT } from './Time';
 import { HUD } from '../ui/HUD';
 
 /** Neutral input used while paused so buffered actions don't fire. */
@@ -35,6 +45,13 @@ export class Game {
   animator!: Animator;
   rig!: CameraRig;
   private spawn = new THREE.Vector3();
+  readonly registry = new DamageRegistry();
+  effects!: Effects;
+  ballistics!: Ballistics;
+  combat!: PlayerCombat;
+  range!: TargetRange;
+  private aimAssist!: AimAssist;
+  private combatHud!: CombatHUD;
   private hud!: HUD;
   private stats!: Stats;
   private gui!: GUI;
@@ -69,7 +86,16 @@ export class Game {
       this.input.rumble(0.8, 0.4, 200);
     });
 
+    this.effects = new Effects(this.scene);
+    this.ballistics = new Ballistics(this.physics, this.registry, this.effects);
+    this.range = new TargetRange(this.scene, this.physics, this.registry);
+    this.combat = new PlayerCombat(this.player, this.animator, this.rig, this.camera, this.ballistics, this.effects, this.registry, this.spawn);
+    this.aimAssist = new AimAssist(this.registry, this.physics);
+    Events.on('player:shot', () => this.input.rumble(0.15, 0.35, 50));
+    Events.on('player:hurt', () => this.input.rumble(0.6, 0.3, 120));
+
     this.hud = new HUD(this.input);
+    this.combatHud = new CombatHUD(this.camera);
     this.initDebug();
     this.renderer.setAnimationLoop((t) => this.frame(t));
   }
@@ -152,9 +178,25 @@ export class Game {
     move.add(this.player, 'encumbrance', 0, 1, 0.05).name('encumbrance');
     move.close();
 
+    const wf = this.gui.addFolder('Weapons');
+    const ids = Object.fromEntries(Object.values(WEAPONS).map((w) => [w.name, w.id]));
+    const rarities = Object.keys(RARITY);
+    const cfg = { slot1: 'mako', slot2: 'wrenchback', rarity: 'rare' as Rarity };
+    const reequip = () => {
+      this.combat.equip(0, cfg.slot1, cfg.rarity);
+      this.combat.equip(1, cfg.slot2, cfg.rarity);
+      this.combat.selectSlot(this.combat.active, true);
+    };
+    wf.add(cfg, 'slot1', ids).name('Slot 1 (1)').onChange(reequip);
+    wf.add(cfg, 'slot2', ids).name('Slot 2 (2)').onChange(reequip);
+    wf.add(cfg, 'rarity', rarities).name('Rarity').onChange(reequip);
+    wf.add(this.combat.pouch, 'infinite').name('Infinite reserve');
+    bind(wf, 'aimAssist', 0, 1, 0.05);
+    wf.add({ refill: () => { this.combat.health.reset(); } }, 'refill').name('Refill health + shield');
+
     const tp = this.gui.addFolder('Teleport');
     const spots: Record<string, [number, number, number]> = {
-      Spawn: [0, 0, 8], Ledges: [-10, 0, -4], Ramps: [21, 0, -2], Stairs: [-30, 0, 13],
+      Spawn: [0, 0, 8], Range: [70, 0, 4], Ledges: [-10, 0, -4], Ramps: [21, 0, -2], Stairs: [-30, 0, 13],
       'Vault walls': [-9, 0, 50], 'Slide hill (top)': [-70, 5, 22], Ladder: [-45, 0, -23], Corridor: [41.5, 0, 12],
     };
     for (const [name, [x, y, z]] of Object.entries(spots)) {
@@ -169,19 +211,27 @@ export class Game {
     const dt = this.time.delta;
 
     this.input.update(dt);
-    const active = this.hud.playing;
+    const alive = this.combat.health.alive;
+    const active = this.hud.playing && alive;
     const aiming = active && this.input.adsAxis > 0.3;
+    if (this.input.activeDevice === 'gamepad' && (this.input.pressed('fire') || this.input.pressed('jump'))) Sfx.unlock();
 
     if (active) {
-      this.rig.handleInput(this.input, dt, aiming);
-      this.player.frameInput(this.input, this.rig.moveYaw, this.rig.yaw, aiming, dt);
-      if (this.input.down('fire')) this.player.breakSprint();
-    } else {
-      this.player.frameInput(IDLE_INPUT, this.rig.moveYaw, this.rig.yaw, false, dt);
+      const assist =
+        this.input.activeDevice === 'gamepad'
+          ? this.aimAssist.compute(this.camera, Settings.get('aimAssist'), this.rig.ads, Math.abs(this.input.moveX) + Math.abs(this.input.moveY) + Math.abs(this.input.lookX) > 0.01, dt, this.player.collider)
+          : undefined;
+      this.rig.handleInput(this.input, dt, aiming, assist);
     }
+    this.combat.update(dt, active ? this.input : IDLE_INPUT, active);
+    const facing = aiming || this.combat.combatFacing;
+    this.player.frameInput(active ? this.input : IDLE_INPUT, this.rig.moveYaw, this.rig.yaw, facing, dt);
+    if (active && this.input.down('fire')) this.player.breakSprint();
 
     for (let i = 0; i < steps; i++) {
       this.player.step();
+      this.range.step();
+      this.ballistics.step(FIXED_DT);
       this.physics.step();
       if (this.player.center.y < -50) this.player.teleport(this.spawn);
     }
@@ -189,8 +239,11 @@ export class Game {
     this.physics.syncMeshes();
     this.physics.updateDebug();
     this.player.interpolate(this.time.alpha);
-    this.animator.update(dt, this.player, this.rig.pitch);
+    this.animator.update(dt, this.player, this.rig.pitch, this.combat.pose);
     this.rig.update(dt, this.player, aiming, this.animator.root);
+    this.range.update(dt);
+    this.ballistics.render();
+    this.effects.update(dt);
 
     // Keep shadow frustum centred on player
     const p = this.player.renderCenter;
@@ -198,6 +251,7 @@ export class Game {
     this.sun.position.copy(p).addScaledVector(this.sunDir, 80);
 
     this.hud.update(dt, Settings.get('showDebug'), this.player, this.rig);
+    this.combatHud.update(dt, this.combat, this.rig, this.player);
     this.renderer.render(this.scene, this.camera);
     this.stats.end();
     this.stats.update();

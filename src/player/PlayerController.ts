@@ -58,6 +58,8 @@ export class PlayerController {
   ladder: Ladder | null = null;
   /** Encumbrance 0..1 — scales speeds and regen (loot tension, M6). */
   encumbrance = 0;
+  /** Weapon-weight speed multiplier (set by combat). */
+  speedMult = 1;
 
   // Capsule centre, current and previous fixed step (for render interpolation)
   readonly center = new THREE.Vector3();
@@ -246,7 +248,7 @@ export class PlayerController {
       const back = -wish.dot(yawToDir(this.aimYaw, _v));
       if (back > 0.3) target *= T.backwardMultiplier;
     }
-    target *= enc;
+    target *= enc * this.speedMult;
 
     // --- horizontal velocity
     const hv = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);

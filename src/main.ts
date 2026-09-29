@@ -1,4 +1,5 @@
 import { Game } from './core/Game';
+import { Events } from './core/Events';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);
@@ -7,4 +8,4 @@ game.init().catch((err) => {
   document.getElementById('ui')!.innerHTML = `<pre style="color:#f66;padding:20px">${String(err)}</pre>`;
 });
 
-if (import.meta.env.DEV) (window as any).game = game;
+if (import.meta.env.DEV) Object.assign(window as any, { game, Events });

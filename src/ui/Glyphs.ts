@@ -5,17 +5,20 @@ const PAD_GLYPHS: Record<PadStyle, Record<Button, string>> = {
   xbox: {
     fire: 'RT', ads: 'LT', sprint: 'LS', crouch: 'B', jump: 'A', reload: 'X', interact: 'Hold X',
     swapWeapon: 'Y', throwable: 'LB', melee: 'RS', dodge: 'RB', heal: 'D↑', swapShoulder: 'D→',
-    freeLook: 'D←', inventory: 'D↓', map: 'View', pause: 'Menu', toggleView: '—',
+    freeLook: 'Hold D←', inventory: 'D↓', map: 'View', pause: 'Menu', toggleView: '—',
+    fireMode: 'D←', slot1: 'Y', slot2: 'Y',
   },
   ps: {
     fire: 'R2', ads: 'L2', sprint: 'L3', crouch: '○', jump: '✕', reload: '□', interact: 'Hold □',
     swapWeapon: '△', throwable: 'L1', melee: 'R3', dodge: 'R1', heal: 'D↑', swapShoulder: 'D→',
-    freeLook: 'D←', inventory: 'D↓', map: 'Share', pause: 'Options', toggleView: '—',
+    freeLook: 'Hold D←', inventory: 'D↓', map: 'Share', pause: 'Options', toggleView: '—',
+    fireMode: 'D←', slot1: '△', slot2: '△',
   },
   generic: {
     fire: 'R2', ads: 'L2', sprint: 'L3', crouch: 'B2', jump: 'B1', reload: 'B3', interact: 'Hold B3',
     swapWeapon: 'B4', throwable: 'L1', melee: 'R3', dodge: 'R1', heal: 'D↑', swapShoulder: 'D→',
-    freeLook: 'D←', inventory: 'D↓', map: 'Select', pause: 'Start', toggleView: '—',
+    freeLook: 'Hold D←', inventory: 'D↓', map: 'Select', pause: 'Start', toggleView: '—',
+    fireMode: 'D←', slot1: 'B4', slot2: 'B4',
   },
 };
 

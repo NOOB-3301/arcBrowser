@@ -61,7 +61,7 @@ html, body {
 .stamina.exhausted .stamina-fill { background: #d9482b; }
 
 .hud-prompts {
-  position: absolute; right: 16px; bottom: 16px;
+  position: absolute; right: 16px; top: 64px; font-size: 12px !important; opacity: 0.85;
   display: flex; flex-direction: column; gap: 4px; font-size: 13px; align-items: flex-end;
 }
 .hud-prompts div { background: var(--ui-bg); padding: 3px 8px; border-radius: 3px; }
@@ -79,7 +79,7 @@ kbd {
 .hud-toast.show { opacity: 1; }
 
 .hud-debug {
-  position: absolute; left: 16px; bottom: 16px; margin: 0;
+  position: absolute; left: 16px; top: 84px; margin: 0;
   background: var(--ui-bg); padding: 8px 10px; border-radius: 4px;
   font: 12px/1.45 ui-monospace, Menlo, monospace; color: var(--ui-dim);
 }
@@ -99,3 +99,74 @@ kbd {
 
 /* lil-gui / stats sit above the overlay */
 .lil-gui.root { z-index: 20; }
+
+/* ---------------------------------------------------------------- combat HUD */
+.combat-hud { position: absolute; inset: 0; pointer-events: none; }
+
+.vitals { position: absolute; left: 16px; bottom: 18px; width: 260px; display: flex; flex-direction: column; gap: 4px; }
+.bar { position: relative; height: 9px; background: rgba(0, 0, 0, 0.5); border-radius: 2px; overflow: hidden; }
+.bar .fill { height: 100%; width: 100%; transition: width 0.12s; }
+.bar.shield .fill { background: #58a8ff; }
+.bar.hp { height: 14px; }
+.bar.hp .fill { background: var(--ui-fg); }
+.bar.hp span { position: absolute; right: 6px; top: -1px; font: 700 11px var(--ui-font); color: #111; }
+.bar.heal { height: 4px; opacity: 0; transition: opacity 0.2s; }
+.bar.heal .fill { background: #6fdc6a; transition: none; }
+
+.weapon-panel {
+  position: absolute; right: 16px; bottom: 18px; min-width: 220px; text-align: right;
+  background: linear-gradient(90deg, transparent, var(--ui-bg) 30%); padding: 8px 12px 8px 40px; border-radius: 4px;
+}
+.w-name { font-weight: 800; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; }
+.w-ammo { font-variant-numeric: tabular-nums; }
+.w-mag { font-size: 34px; font-weight: 800; line-height: 1.05; }
+.w-mag.low { color: #ff6a45; }
+.w-reserve { font-size: 16px; color: var(--ui-dim); }
+.w-mode { font-size: 11px; color: var(--ui-dim); letter-spacing: 0.12em; }
+.w-bar { height: 4px; margin-top: 5px; background: rgba(0, 0, 0, 0.5); border-radius: 2px; overflow: hidden; opacity: 0; }
+.w-bar .fill { height: 100%; background: var(--ui-fg); }
+.w-bar.reload .fill { background: #ffd28a; }
+.w-bar.heat .fill { background: #ff9a3a; }
+.w-bar.hot .fill { background: #ff3a2a; }
+.w-bar.charge .fill { background: #66e0ff; }
+.w-bar.spin .fill { background: #ffb060; }
+.w-alt { margin-top: 6px; font-size: 11px; color: var(--ui-dim); }
+
+.hitmarker { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
+.hitmarker.show { opacity: 1; }
+.hitmarker i { position: absolute; width: 2px; height: 9px; background: #fff; box-shadow: 0 0 2px #000; }
+.hitmarker i:nth-child(1) { transform: translate(-10px, -15px) rotate(-45deg); }
+.hitmarker i:nth-child(2) { transform: translate(8px, -15px) rotate(45deg); }
+.hitmarker i:nth-child(3) { transform: translate(-10px, 6px) rotate(45deg); }
+.hitmarker i:nth-child(4) { transform: translate(8px, 6px) rotate(-45deg); }
+.hitmarker.head i { background: #ffcc33; }
+.hitmarker.kill i { background: #ff3a2a; height: 13px; }
+.hitmarker.armor i { background: #8ab4ff; }
+
+.dmg-num {
+  position: absolute; left: 0; top: 0; font: 800 15px var(--ui-font); color: #fff;
+  text-shadow: 0 1px 3px #000; will-change: transform;
+}
+.dmg-num.head { color: #ffcc33; font-size: 18px; }
+.dmg-num.shield { color: #7cc0ff; }
+.dmg-num.armor { color: #9aa4b0; font-size: 12px; }
+
+.vignette {
+  position: absolute; inset: 0; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(170, 20, 10, 0.75) 100%);
+}
+
+.scope { position: absolute; inset: 0; opacity: 0; transition: opacity 0.08s; }
+.scope-ring {
+  position: absolute; left: 50%; top: 50%; width: 76vh; height: 76vh; transform: translate(-50%, -50%);
+  border-radius: 50%; box-shadow: 0 0 0 200vmax #000, inset 0 0 40px 10px rgba(0, 0, 0, 0.9);
+}
+.scope-ring::before, .scope-ring::after { content: ''; position: absolute; background: rgba(0, 0, 0, 0.85); }
+.scope-ring::before { left: 0; right: 0; top: 50%; height: 1px; }
+.scope-ring::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+
+.down-overlay {
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(60, 0, 0, 0.45); font-size: 56px; font-weight: 900; letter-spacing: 0.3em;
+}
+.down-overlay small { font-size: 16px; letter-spacing: 0.1em; font-weight: 400; margin-top: 8px; }

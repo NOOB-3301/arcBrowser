@@ -33,7 +33,7 @@ export const Tuning = {
   jumpBuffer: 0.15,
   terminalVelocity: 40,
   fallDamageSpeed: 11,
-  fallDamagePerMs: 9,
+  fallDamagePerMs: 6,
 
   slideMinSpeed: 5.2,
   slideBoost: 1.5,
