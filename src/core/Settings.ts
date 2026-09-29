@@ -33,7 +33,7 @@ const DEFAULTS: SettingsData = {
   stickCurve: 1.8,
   aimAssist: 0.5,
   rumble: true,
-  showDebug: true,
+  showDebug: false,
   difficulty: 'veteran',
   graphicsQuality: 'high',
 };

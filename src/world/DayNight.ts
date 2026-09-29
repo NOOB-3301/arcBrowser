@@ -40,7 +40,7 @@ const PRESETS: Record<TimeOfDay, Preset> = {
   morning: {
     elevation: 13, azimuth: 110, sun: '#ffc690', sunIntensity: 3.2, turbidity: 6, rayleigh: 1.6, mie: 0.006, mieG: 0.86,
     clouds: 0.35, cloudDensity: 0.45, exposure: 1.0, env: 1.0, fogNear: 30, fogFar: 1500, fogFalloff: 0.022,
-    fogTint: '#d9c2a2', fogTintAmt: 0.25, scatter: 0.9, shadow: 1, groundAlbedo: '#4a4232', skyLum: 0.5,
+    fogTint: '#d9c2a2', fogTintAmt: 0.25, scatter: 0.6, shadow: 1, groundAlbedo: '#4a4232', skyLum: 0.5,
   },
   noon: {
     elevation: 55, azimuth: 150, sun: '#fff0dc', sunIntensity: 3.6, turbidity: 4.5, rayleigh: 1.2, mie: 0.005, mieG: 0.82,
@@ -48,9 +48,9 @@ const PRESETS: Record<TimeOfDay, Preset> = {
     fogTint: '#cfc4b0', fogTintAmt: 0.2, scatter: 0.45, shadow: 1, groundAlbedo: '#4d4636', skyLum: 0.6,
   },
   dusk: {
-    elevation: 5, azimuth: 250, sun: '#ff9550', sunIntensity: 2.1, turbidity: 8, rayleigh: 2.6, mie: 0.008, mieG: 0.9,
-    clouds: 0.42, cloudDensity: 0.5, exposure: 0.95, env: 1.0, fogNear: 40, fogFar: 1500, fogFalloff: 0.02,
-    fogTint: '#b98a6e', fogTintAmt: 0.25, scatter: 1.0, shadow: 1, groundAlbedo: '#3d3228', skyLum: 0.32,
+    elevation: 7, azimuth: 250, sun: '#ff9a58', sunIntensity: 2.3, turbidity: 6, rayleigh: 2.2, mie: 0.005, mieG: 0.8,
+    clouds: 0.42, cloudDensity: 0.5, exposure: 0.95, env: 1.0, fogNear: 90, fogFar: 1700, fogFalloff: 0.013,
+    fogTint: '#b98a6e', fogTintAmt: 0.25, scatter: 0.5, shadow: 1, groundAlbedo: '#3d3228', skyLum: 0.32,
   },
   overcast: {
     elevation: 42, azimuth: 180, sun: '#dfe3e8', sunIntensity: 0.9, turbidity: 10, rayleigh: 0.7, mie: 0.004, mieG: 0.6,
@@ -289,7 +289,7 @@ export class DayNight {
     const sc = FogUniforms.sunColor;
     // Mie glow at the horizon can be extremely bright; cap it relative to the fog so it reads as haze, not glare
     const sunTint = this.sunHorizonColor.clone();
-    const cap = lum(this.fog.color) * 1.6;
+    const cap = lum(this.fog.color) * 1.15;
     if (lum(sunTint) > cap) sunTint.multiplyScalar(cap / lum(sunTint));
     sc.x = sunTint.r;
     sc.y = sunTint.g;
