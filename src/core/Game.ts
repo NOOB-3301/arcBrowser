@@ -36,6 +36,11 @@ import { Weather, WEATHER_STATES, type WeatherState } from '../world/Weather';
 import { BossBar, ThrowableWidget } from '../ui/BossBar';
 import { SHARDCOAST } from '../maps/shardcoast';
 import { RaidManager } from '../raid/RaidManager'; // W3
+// W1: renderer / post-processing
+import { RenderGlobals } from '../render/RenderGlobals';
+import { PostFX } from '../render/PostFX';
+import { Quality, QUALITY_PRESETS, setQuality, type QualityLevel } from '../render/Quality';
+import { initTextures } from '../world/Materials';
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -74,6 +79,7 @@ export class Game {
   private bossBar!: BossBar;
   private throwWidget!: ThrowableWidget;
   private gui!: GUI;
+  readonly post: PostFX; // W1
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -85,6 +91,10 @@ export class Game {
     this.renderer.toneMappingExposure = 0.9;
 
     this.camera = new THREE.PerspectiveCamera(Settings.get('fov'), window.innerWidth / window.innerHeight, 0.05, 2600);
+    // W1: quality preset, KTX2 textures, post chain (sets AgX tone mapping + pixel ratio)
+    if (Quality.level !== Settings.get('graphicsQuality')) setQuality(Settings.get('graphicsQuality'));
+    initTextures(this.renderer);
+    this.post = new PostFX(this.renderer, this.scene, this.camera);
     this.input = new Input(canvas);
 
     window.addEventListener('resize', () => this.onResize());
@@ -182,6 +192,16 @@ export class Game {
     bind(inputFolder, 'adsSensitivityMultiplier', 0.2, 1, 0.05);
 
     const view = this.gui.addFolder('View');
+    // W1: graphics quality preset
+    const gq = { q: Quality.level as QualityLevel };
+    view
+      .add(gq, 'q', Object.fromEntries(Object.entries(QUALITY_PRESETS).map(([k, v]) => [v.label, k])))
+      .name('Graphics quality')
+      .onChange((q: QualityLevel) => {
+        Settings.set('graphicsQuality', q);
+        setQuality(q);
+      });
+    view.add(this.post, 'enabled').name('Post-processing');
     bind(view, 'fov', 55, 100, 1);
     bind(view, 'showDebug');
     view
@@ -279,7 +299,7 @@ export class Game {
     // W3: pause menu freezes the simulation (solo raid)
     if (this.raid?.paused) {
       this.raid.update(dt);
-      this.renderer.render(this.scene, this.camera);
+      this.post.render(dt); // W1 post chain also while paused
       this.stats.end();
       this.stats.update();
       return;
@@ -325,6 +345,7 @@ export class Game {
     this.ballistics.render();
     this.effects.update(dt);
     this.weather.update(dt, this.camera.position); // W4
+    RenderGlobals.wetness.value = this.weather.wetness; // integration: rain wets terrain + buildings
 
     if (this.mapView) {
       if (this.hud.playing && this.input.pressed('map') && !(this.raid?.blocksInput ?? false)) this.mapView.toggle(); // W3
@@ -337,7 +358,7 @@ export class Game {
     this.combatHud.update(dt, this.combat, this.rig, this.player);
     this.bossBar.update(dt, this.ai.bots, this.player.renderCenter); // W4
     this.throwWidget.update(dt); // W4
-    this.renderer.render(this.scene, this.camera);
+    this.post.render(dt); // W1: was renderer.render(scene, camera)
     this.stats.end();
     this.stats.update();
   }
@@ -354,6 +375,6 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.post.setSize(window.innerWidth, window.innerHeight); // W1
   }
 }

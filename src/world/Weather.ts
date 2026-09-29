@@ -79,7 +79,7 @@ export class Weather {
   constructor(
     private scene: THREE.Scene,
     renderer: THREE.WebGLRenderer,
-    private dn: { fog: THREE.Fog; sun: THREE.DirectionalLight; hemi: THREE.HemisphereLight },
+    private dn: { fog: THREE.Fog; sun: { intensity: number }; hemi: { intensity: number } },
   ) {
     const fog = dn.fog;
     this.tracked = [
