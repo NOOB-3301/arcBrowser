@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RAPIER, Groups, interactionGroups, type Physics } from '../physics/Physics';
 import { triplanarMaterial } from './Materials';
+import { NavObstacles } from '../ai/NavObstacles';
 
 export type KitMat =
   | 'concrete' | 'plaster' | 'brick' | 'metal' | 'rust' | 'roof' | 'wood' | 'dark' | 'asphalt'
@@ -291,6 +292,7 @@ export class Kit {
       const body = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
       const groups = interactionGroups(Groups.WORLD, 0xffff);
       for (const c of this.colliders) {
+        NavObstacles.addBox(c.pos, c.cyl ? new THREE.Vector3(c.cyl.r, c.cyl.h / 2, c.cyl.r) : c.half, c.rot);
         const desc = c.cyl ? RAPIER.ColliderDesc.cylinder(c.cyl.h / 2, c.cyl.r) : RAPIER.ColliderDesc.cuboid(c.half.x, c.half.y, c.half.z);
         desc.setTranslation(c.pos.x, c.pos.y, c.pos.z).setRotation({ x: c.rot.x, y: c.rot.y, z: c.rot.z, w: c.rot.w }).setCollisionGroups(groups);
         physics.world.createCollider(desc, body);

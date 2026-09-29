@@ -11,6 +11,8 @@ export class MapView {
   private el: HTMLElement;
   private overlay: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private holder: HTMLElement;
+  private baseBuilt = false;
 
   constructor(private map: MapInfo) {
     this.el = document.createElement('div');
@@ -22,18 +24,22 @@ export class MapView {
         <div class="mapview-legend"><span class="lg-x">⇪ Extraction</span><span class="lg-p">◆ Point of interest</span><span class="lg-me">▲ You</span></div>
       </div>`;
     document.getElementById('ui')!.appendChild(this.el);
-    const holder = this.el.querySelector('.mapview-canvas')!;
-    const base = this.renderBase();
-    base.className = 'mapview-base';
-    holder.appendChild(base);
+    this.holder = this.el.querySelector('.mapview-canvas')!;
     this.overlay = document.createElement('canvas');
     this.overlay.width = this.overlay.height = RES;
     this.overlay.className = 'mapview-overlay';
-    holder.appendChild(this.overlay);
+    this.holder.appendChild(this.overlay);
     this.ctx = this.overlay.getContext('2d')!;
   }
 
   toggle(): void {
+    if (!this.baseBuilt) {
+      // Built lazily on first open so it never costs load time
+      const base = this.renderBase();
+      base.className = 'mapview-base';
+      this.holder.insertBefore(base, this.overlay);
+      this.baseBuilt = true;
+    }
     this.open = !this.open;
     this.el.classList.toggle('open', this.open);
   }
@@ -48,7 +54,11 @@ export class MapView {
     const c = document.createElement('canvas');
     c.width = c.height = RES;
     const g = c.getContext('2d')!;
-    const img = g.createImageData(RES, RES);
+    const G = hm.n;
+    const relief = document.createElement('canvas');
+    relief.width = relief.height = G;
+    const rg = relief.getContext('2d')!;
+    const img = rg.createImageData(G, G);
     const light = new THREE.Vector3(-1, 1.4, -1).normalize();
     const n = new THREE.Vector3();
     const palette: [number, number, number][] = [
@@ -59,16 +69,12 @@ export class MapView {
       [58, 58, 60], // asphalt
       [168, 166, 160], // concrete
     ];
-    for (let py = 0; py < RES; py++) {
-      const z = (py / RES) * hm.size - hm.half;
-      for (let px = 0; px < RES; px++) {
-        const x = (px / RES) * hm.size - hm.half;
-        const h = hm.sample(x, z);
-        hm.normal(x, z, n);
+    for (let iz = 0; iz < G; iz++) {
+      for (let ix = 0; ix < G; ix++) {
+        const h = hm.heights[iz * G + ix];
+        hm.normalAt(ix, iz, n);
         const shade = 0.55 + 0.6 * Math.max(0, n.dot(light));
-        const ix = Math.round((x + hm.half) / hm.cell);
-        const iz = Math.round((z + hm.half) / hm.cell);
-        const si = (iz * hm.n + ix) * 6;
+        const si = (iz * G + ix) * 6;
         let r = 0;
         let gg = 0;
         let b = 0;
@@ -82,7 +88,7 @@ export class MapView {
         const water = (wet > 0.5 && h < def.waterLevel) || (wet > 0.6 && def.rivers.length > 0 && h < 6 && hm.splat[si + SPLAT.sand] > 60);
         // Contours every 10 m
         const contour = Math.abs((h % 10) - 5) > 4.6 ? 0.82 : 1;
-        const o = (py * RES + px) * 4;
+        const o = (iz * G + ix) * 4;
         if (water) {
           img.data[o] = 44;
           img.data[o + 1] = 82;
@@ -95,7 +101,9 @@ export class MapView {
         img.data[o + 3] = 255;
       }
     }
-    g.putImageData(img, 0, 0);
+    rg.putImageData(img, 0, 0);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(relief, 0, 0, RES, RES);
 
     // Roads
     for (const road of gen.roads) {

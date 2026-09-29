@@ -58,6 +58,8 @@ export class PlayerController {
   ladder: Ladder | null = null;
   /** Encumbrance 0..1 — scales speeds and regen (loot tension, M6). */
   encumbrance = 0;
+  /** Damageable that owns this body (noise attribution for AI hearing). */
+  owner?: import('../combat/Damage').Damageable;
   /** Weapon-weight speed multiplier (set by combat). */
   speedMult = 1;
 
@@ -290,7 +292,7 @@ export class PlayerController {
         this.velocity.y = T.jumpVelocity * (1 - this.encumbrance * 0.2);
         this.grounded = false;
         this.coyoteT = 0;
-        Events.emit('noise', { pos: this.feet(), radius: NoiseRadius.jog });
+        Events.emit('noise', { emitter: this.owner, pos: this.feet(), radius: NoiseRadius.jog });
       }
       this.jumpBufferT = 0;
     }
@@ -313,7 +315,8 @@ export class PlayerController {
       else this.cc.enableSnapToGround(0.35);
       this.snapDisabled = rising;
     }
-    this.cc.computeColliderMovement(this.collider, desired, undefined, interactionGroups(0xffff, ~Groups.PLAYER & 0xffff));
+    // Collide with everything except projectiles/triggers (other characters included)
+    this.cc.computeColliderMovement(this.collider, desired, undefined, interactionGroups(0xffff, 0xffff & ~Groups.PROJECTILE & ~Groups.TRIGGER));
     const m = this.cc.computedMovement();
     this.center.x += m.x;
     this.center.y += m.y;
@@ -341,7 +344,7 @@ export class PlayerController {
     this.airPeakFallSpeed = 0;
     this.velocity.y = -2;
     Events.emit('player:land', { speed });
-    if (speed > 6) Events.emit('noise', { pos: this.feet(), radius: NoiseRadius.land });
+    if (speed > 6) Events.emit('noise', { emitter: this.owner, pos: this.feet(), radius: NoiseRadius.land });
     if (speed > T.fallDamageSpeed) {
       Events.emit('player:fallDamage', { amount: (speed - T.fallDamageSpeed) * T.fallDamagePerMs });
     }
@@ -383,7 +386,7 @@ export class PlayerController {
     this.state = 'slide';
     this.slideT = 0;
     this.slideAirT = 0;
-    Events.emit('noise', { pos: this.feet(), radius: NoiseRadius.jog });
+    Events.emit('noise', { emitter: this.owner, pos: this.feet(), radius: NoiseRadius.jog });
     return true;
   }
 
@@ -458,7 +461,7 @@ export class PlayerController {
     this.state = 'roll';
     this.rollT = 0;
     this.facingYaw = dirToYaw(this.rollDir);
-    Events.emit('noise', { pos: this.feet(), radius: NoiseRadius.jog });
+    Events.emit('noise', { emitter: this.owner, pos: this.feet(), radius: NoiseRadius.jog });
     return true;
   }
   private wasCrouchedBeforeRoll = false;
@@ -728,7 +731,7 @@ export class PlayerController {
     if (this.noiseT > 0) return;
     const radius = NoiseRadius[this.locomotion as keyof typeof NoiseRadius] ?? NoiseRadius.walk;
     this.noiseT = this.locomotion === 'sprint' ? 0.28 : this.locomotion === 'jog' ? 0.36 : 0.5;
-    Events.emit('noise', { pos: this.feet(), radius, source: 'footstep' });
+    Events.emit('noise', { emitter: this.owner, pos: this.feet(), radius, source: 'footstep' });
   }
 
   // ------------------------------------------------------------------- render helpers
@@ -744,6 +747,10 @@ export class PlayerController {
 
   renderFeet(out = new THREE.Vector3()): THREE.Vector3 {
     return out.copy(this.renderCenter).addScaledVector(UP, -(this.halfHeight + T.capsuleRadius));
+  }
+
+  get rigidBody(): RAPIER.RigidBody {
+    return this.body;
   }
 
   get horizontalSpeed(): number {

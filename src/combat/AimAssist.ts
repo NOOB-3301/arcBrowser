@@ -34,7 +34,7 @@ export class AimAssist {
     let bestTarget: unknown = null;
     let bestAngle = SLOW_CONE;
     for (const t of this.registry.targets) {
-      if (t.team === 'player' || !t.health.alive) continue;
+      if (t.faction === 'player' || t.faction === 'neutral' || !t.health.alive) continue;
       this.pts.length = 0;
       t.aimPoints(this.pts);
       for (const p of this.pts) {

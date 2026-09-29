@@ -6,6 +6,7 @@ import type { MapDef } from './MapDef';
 import type { GenResult } from './MapGen';
 import { hash2 } from './Noise';
 import { triplanarMaterial } from './Materials';
+import { NavObstacles } from '../ai/NavObstacles';
 
 const CELL = 256;
 const VIEW_DIST = 1000;
@@ -116,8 +117,10 @@ export class Vegetation {
       // Colliders: trunks for trees, squashed balls for rocks
       if (kind === 'pine' || kind === 'dead' || kind === 'broad') {
         physics.world.createCollider(RAPIER.ColliderDesc.cylinder(2 * scale, 0.28 * scale).setTranslation(x, y + 2 * scale, z).setCollisionGroups(groups), body);
+        NavObstacles.addCylinder(x, z, y, y + 4 * scale, 0.28 * scale);
       } else if (kind === 'rock' && scale > 0.6) {
         physics.world.createCollider(RAPIER.ColliderDesc.ball(scale * 0.85).setTranslation(x, y + scale * 0.1, z).setCollisionGroups(groups), body);
+        NavObstacles.addCylinder(x, z, y - scale * 0.75, y + scale * 0.95, scale * 0.85);
       }
     };
 

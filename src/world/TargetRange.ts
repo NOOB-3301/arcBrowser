@@ -22,6 +22,7 @@ function groups(): number {
 class Dummy implements Damageable {
   readonly id = newTargetId();
   readonly team: Team = 'arc';
+  readonly faction = 'dummy';
   readonly surface: Surface = 'machine';
   readonly health: Health;
   readonly group = new THREE.Group();
@@ -116,6 +117,7 @@ class Dummy implements Damageable {
 class Plate implements Damageable {
   readonly id = newTargetId();
   readonly team: Team = 'neutral';
+  readonly faction = 'neutral';
   readonly surface: Surface = 'metal';
   readonly health = new Health(1e9);
   private mat = new THREE.MeshStandardMaterial({ color: '#c9c3b5', roughness: 0.35, metalness: 0.8 });
@@ -160,6 +162,7 @@ class Plate implements Damageable {
 class ArmorRig implements Damageable {
   readonly id = newTargetId();
   readonly team: Team = 'arc';
+  readonly faction = 'dummy';
   readonly surface: Surface = 'machine';
   readonly health = new Health(400);
   private plateCol: RAPIER.Collider;

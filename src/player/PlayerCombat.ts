@@ -28,6 +28,7 @@ const HEAL_AMOUNT = 40;
 export class PlayerCombat implements Damageable {
   readonly id = newTargetId();
   readonly team: Team = 'player';
+  readonly faction = 'player';
   readonly surface: Surface = 'flesh';
   readonly health = new Health(100, 60, 0.6);
   readonly pouch = new AmmoPouch();
@@ -60,6 +61,7 @@ export class PlayerCombat implements Damageable {
     private spawn: THREE.Vector3,
   ) {
     registry.register(this, player.collider);
+    player.owner = this;
     this.equip(0, 'mako', 'rare');
     this.equip(1, 'wrenchback', 'common');
     this.selectSlot(0, true);
@@ -107,6 +109,10 @@ export class PlayerCombat implements Damageable {
     this.healingT = -1;
     if (!instant) Sfx.swap();
     Events.emit('weapon:equipped', { weapon: this.weapon });
+  }
+
+  stance(): { crouched: boolean; speed: number; velocity: THREE.Vector3 } {
+    return { crouched: this.player.crouched, speed: this.player.horizontalSpeed, velocity: this.player.velocity };
   }
 
   zoneFor(_c: RAPIER.Collider, point: THREE.Vector3): HitZone {
@@ -245,6 +251,8 @@ export class PlayerCombat implements Damageable {
         penetration: d.penetration,
         headMultiplier: d.headMultiplier,
         team: 'player',
+        faction: 'player',
+        attacker: this,
         shooter: this.player.collider,
         byPlayer: true,
         weaponId: d.id,
@@ -257,7 +265,7 @@ export class PlayerCombat implements Damageable {
     this.recoil.onShot(w, this.rig, this.rig.ads, this.player.crouched);
     this.effects.muzzleFlash(muzzle, d.tracerColor, d.suppressed ? 0.3 : d.cls === 'lmg' || d.cls === 'battle' ? 1.3 : 1);
     Sfx.shot(d.cls, d.suppressed, d.cls === 'energy');
-    Events.emit('noise', { pos: muzzle.clone(), radius: d.noise, source: 'gunshot', team: 'player' });
+    Events.emit('noise', { emitter: this, pos: muzzle.clone(), radius: d.noise, source: 'gunshot' });
     Events.emit('player:shot', { weapon: w });
     this.recentFireT = 0;
     this.kick = 1;

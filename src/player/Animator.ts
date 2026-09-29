@@ -37,10 +37,14 @@ export class Animator {
   private weapon: THREE.Object3D | null = null;
   private _m = new THREE.Vector3();
 
-  constructor(scene: THREE.Scene) {
-    const suit = new THREE.MeshStandardMaterial({ color: '#c9a36a', roughness: 0.85 });
-    const dark = new THREE.MeshStandardMaterial({ color: '#3b3a36', roughness: 0.9 });
-    const accent = new THREE.MeshStandardMaterial({ color: '#e0662a', roughness: 0.6 });
+  /** Materials that flash when hit (bots). */
+  readonly materials: THREE.MeshStandardMaterial[];
+
+  constructor(scene: THREE.Scene, palette: { suit: string; dark: string; accent: string } = { suit: '#c9a36a', dark: '#3b3a36', accent: '#e0662a' }) {
+    const suit = new THREE.MeshStandardMaterial({ color: palette.suit, roughness: 0.85 });
+    const dark = new THREE.MeshStandardMaterial({ color: palette.dark, roughness: 0.9 });
+    const accent = new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.6 });
+    this.materials = [suit, dark, accent];
     const visor = new THREE.MeshStandardMaterial({ color: '#1a2226', roughness: 0.2, metalness: 0.6 });
 
     const box = (w: number, h: number, d: number, m: THREE.Material, y = 0, z = 0, x = 0) => {

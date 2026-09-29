@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Physics } from '../physics/Physics';
 import type { Traversal } from './Traversal';
+import { NavObstacles } from '../ai/NavObstacles';
 
 /**
  * Greybox movement/combat test arena: ledges of known heights, slopes, stairs,
@@ -69,6 +70,7 @@ export class TestArena {
     mesh.castShadow = mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.physics.addStaticBox(pos, size.clone().multiplyScalar(0.5), mesh.quaternion);
+    NavObstacles.addBox(pos, size.clone().multiplyScalar(0.5), mesh.quaternion);
     return mesh;
   }
 

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { WeaponClass } from '../weapons/WeaponDefs';
 
 /**
@@ -9,6 +10,21 @@ class SfxEngine {
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   volume = 0.5;
+  /** Listener position (player) for distance attenuation. */
+  readonly listener = new THREE.Vector3();
+  /** Gain multiplier applied to the sound currently being built. */
+  private vol = 1;
+
+  /** Set attenuation for a sound emitted at `pos`; returns false if inaudible. */
+  private at(pos?: THREE.Vector3, ref = 12): boolean {
+    if (!pos) {
+      this.vol = 1;
+      return true;
+    }
+    const d = pos.distanceTo(this.listener);
+    this.vol = 1 / (1 + Math.pow(d / ref, 1.6));
+    return this.vol > 0.01;
+  }
 
   unlock(): void {
     if (this.ctx) {
@@ -46,7 +62,7 @@ class SfxEngine {
     f.frequency.value = opts.freq;
     f.Q.value = opts.q ?? 0.7;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(opts.gain, t);
+    g.gain.setValueAtTime(Math.max(0.0011, opts.gain * this.vol), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + opts.decay);
     src.connect(f).connect(g).connect(this.master!);
     src.start(t, Math.random() * 0.5);
@@ -62,14 +78,15 @@ class SfxEngine {
     o.frequency.setValueAtTime(opts.freq, t);
     if (opts.to) o.frequency.exponentialRampToValueAtTime(opts.to, t + opts.decay);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(opts.gain, t);
+    g.gain.setValueAtTime(Math.max(0.0011, opts.gain * this.vol), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + opts.decay);
     o.connect(g).connect(this.master!);
     o.start(t);
     o.stop(t + opts.decay + 0.05);
   }
 
-  shot(cls: WeaponClass, suppressed = false, energy = false): void {
+  shot(cls: WeaponClass, suppressed = false, energy = false, pos?: THREE.Vector3): void {
+    if (!this.at(pos, 25)) return;
     if (energy) {
       this.tone({ freq: cls === 'energy' ? 1400 : 900, to: 180, type: 'sawtooth', decay: 0.18, gain: 0.18 });
       this.burst({ freq: 3000, type: 'highpass', decay: 0.08, gain: 0.15 });
@@ -86,37 +103,65 @@ class SfxEngine {
     this.tone({ freq: heavy ? 90 : 140, to: 40, decay: heavy ? 0.25 : 0.1, gain: heavy ? 0.6 : 0.3 });
   }
 
+  explosion(pos: THREE.Vector3, size = 1): void {
+    if (!this.at(pos, 30 * size)) return;
+    this.burst({ freq: 400, decay: 0.9 * size, gain: 1 });
+    this.tone({ freq: 70, to: 25, decay: 0.8, gain: 0.9 });
+    this.burst({ freq: 2500, type: 'highpass', decay: 0.15, gain: 0.4 });
+  }
+  beep(pos: THREE.Vector3, high = false): void {
+    if (!this.at(pos, 20)) return;
+    this.tone({ freq: high ? 1800 : 1200, type: 'square', decay: 0.08, gain: 0.12 });
+  }
+  chitter(pos: THREE.Vector3): void {
+    if (!this.at(pos, 8)) return;
+    for (let i = 0; i < 3; i++) this.burst({ freq: 3000 + i * 400, type: 'bandpass', q: 8, decay: 0.03, gain: 0.25, delay: i * 0.05 });
+  }
+  arcHit(pos: THREE.Vector3): void {
+    if (!this.at(pos, 15)) return;
+    this.burst({ freq: 2800, type: 'bandpass', q: 3, decay: 0.05, gain: 0.3 });
+  }
   dry(): void {
+    this.vol = 1;
     this.tone({ freq: 2200, type: 'square', decay: 0.03, gain: 0.08 });
   }
   reloadStart(): void {
+    this.vol = 1;
     this.burst({ freq: 2500, type: 'bandpass', q: 3, decay: 0.05, gain: 0.25 });
   }
   reloadEnd(): void {
+    this.vol = 1;
     this.burst({ freq: 1800, type: 'bandpass', q: 4, decay: 0.05, gain: 0.3 });
     this.burst({ freq: 2600, type: 'bandpass', q: 4, decay: 0.05, gain: 0.3, delay: 0.08 });
   }
   shell(): void {
+    this.vol = 1;
     this.burst({ freq: 1500, type: 'bandpass', q: 3, decay: 0.06, gain: 0.25 });
   }
   hit(head: boolean): void {
+    this.vol = 1;
     if (head) this.tone({ freq: 1500, to: 1300, decay: 0.12, gain: 0.2 });
     else this.burst({ freq: 3500, type: 'bandpass', q: 5, decay: 0.03, gain: 0.25 });
   }
   kill(): void {
+    this.vol = 1;
     this.tone({ freq: 700, decay: 0.12, gain: 0.18 });
     this.tone({ freq: 1050, decay: 0.2, gain: 0.18, delay: 0.07 });
   }
   plate(dist: number): void {
+    this.vol = 1;
     this.tone({ freq: 880, decay: 0.8, gain: 0.25, delay: Math.min(dist / 343, 1) });
   }
   overheat(): void {
+    this.vol = 1;
     this.burst({ freq: 5000, type: 'highpass', decay: 0.9, gain: 0.2 });
   }
   hurt(): void {
+    this.vol = 1;
     this.tone({ freq: 160, to: 70, type: 'triangle', decay: 0.25, gain: 0.35 });
   }
   swap(): void {
+    this.vol = 1;
     this.burst({ freq: 1200, type: 'bandpass', q: 2, decay: 0.08, gain: 0.2 });
   }
 }

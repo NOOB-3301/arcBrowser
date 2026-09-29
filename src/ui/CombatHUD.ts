@@ -33,6 +33,8 @@ export class CombatHUD {
   private down: HTMLElement;
   private crosshair: HTMLElement;
   private numbers: DmgNumber[] = [];
+  private dirs: { el: HTMLElement; from: THREE.Vector3; life: number }[] = [];
+  private dirRoot!: HTMLElement;
   private hitT = 0;
   private hurt = 0;
   private _v = new THREE.Vector3();
@@ -44,6 +46,7 @@ export class CombatHUD {
       <div class="scope"><div class="scope-ring"></div></div>
       <div class="vignette"></div>
       <div class="hitmarker"><i></i><i></i><i></i><i></i></div>
+      <div class="dmg-dirs"></div>
       <div class="vitals">
         <div class="bar shield"><div class="fill"></div></div>
         <div class="bar hp"><div class="fill"></div><span></span></div>
@@ -77,8 +80,16 @@ export class CombatHUD {
     this.crosshair = document.querySelector('.crosshair') as HTMLElement;
 
     Events.on('damage', (r: DamageResult) => this.onDamage(r));
-    Events.on('player:hurt', ({ amount }: { amount: number }) => {
+    this.dirRoot = this.root.querySelector('.dmg-dirs')!;
+    Events.on('player:hurt', ({ amount, from }: { amount: number; from?: THREE.Vector3 }) => {
       this.hurt = Math.min(1, this.hurt + amount / 40);
+      if (from) {
+        const el = document.createElement('div');
+        el.className = 'dmg-dir';
+        this.dirRoot.appendChild(el);
+        this.dirs.push({ el, from: from.clone(), life: 1.2 });
+        if (this.dirs.length > 6) this.dirs.shift()!.el.remove();
+      }
     });
     Events.on('plate:ring', ({ dist }: { dist: number }) => {
       this.flashHit('hit');
@@ -172,6 +183,22 @@ export class CombatHUD {
     this.vignette.style.opacity = `${Math.max(this.hurt, lowHp)}`;
 
     this.scope.style.opacity = rig.scoped ? '1' : '0';
+
+    // Damage direction arcs (relative to view heading)
+    const me = player.renderCenter;
+    for (let i = this.dirs.length - 1; i >= 0; i--) {
+      const d = this.dirs[i];
+      d.life -= dt;
+      if (d.life <= 0) {
+        d.el.remove();
+        this.dirs.splice(i, 1);
+        continue;
+      }
+      const bearing = Math.atan2(d.from.x - me.x, -(d.from.z - me.z));
+      const rel = bearing + rig.yaw;
+      d.el.style.transform = `rotate(${rel}rad)`;
+      d.el.style.opacity = `${Math.min(1, d.life * 1.5)}`;
+    }
     this.down.style.display = h.alive ? 'none' : 'flex';
 
     // Damage numbers

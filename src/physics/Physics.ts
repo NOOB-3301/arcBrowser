@@ -94,9 +94,10 @@ export class Physics {
     dir: THREE.Vector3,
     maxDist: number,
     exclude?: RAPIER.Collider,
+    excludeBody?: RAPIER.RigidBody,
   ): { point: THREE.Vector3; normal: THREE.Vector3; distance: number; collider: RAPIER.Collider } | null {
     const ray = new RAPIER.Ray(origin, dir);
-    const hit = this.world.castRayAndGetNormal(ray, maxDist, true, undefined, undefined, exclude);
+    const hit = this.world.castRayAndGetNormal(ray, maxDist, true, undefined, undefined, exclude, excludeBody);
     if (!hit) return null;
     const point = origin.clone().addScaledVector(dir, hit.timeOfImpact);
     return {

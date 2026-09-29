@@ -27,6 +27,9 @@ import { MapView } from '../ui/MapView';
 import { Sfx } from '../audio/Sfx';
 import { FIXED_DT } from './Time';
 import { HUD } from '../ui/HUD';
+import { AIDirector } from '../ai/AIDirector';
+import { DIFFICULTIES, type DifficultyId } from '../ai/Difficulty';
+import type { BotKind } from '../ai/Bot';
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -55,6 +58,7 @@ export class Game {
   private hud!: HUD;
   private compass!: Compass;
   private mapView: MapView | null = null;
+  ai!: AIDirector;
   private stats!: Stats;
   private gui!: GUI;
 
@@ -95,6 +99,15 @@ export class Game {
     this.ballistics = new Ballistics(this.physics, this.registry, this.effects);
     this.combat = new PlayerCombat(this.player, this.animator, this.rig, this.camera, this.ballistics, this.effects, this.registry, this.spawn);
     this.aimAssist = new AimAssist(this.registry, this.physics);
+    progress('Training the machines…');
+    this.ai = new AIDirector(this.scene, this.physics, this.registry, this.ballistics, this.effects, this.world, Settings.get('difficulty'));
+    this.ai.populate(this.spawn);
+    Events.on('explosion', ({ pos, radius }: { pos: THREE.Vector3; radius: number }) => {
+      const d = pos.distanceTo(this.player.renderCenter);
+      const k = Math.max(0, 1 - d / (radius * 6));
+      this.rig.addTrauma(k * 0.8);
+      if (k > 0.2) this.input.rumble(k, k, 300);
+    });
     Events.on('player:shot', () => this.input.rumble(0.15, 0.35, 50));
     Events.on('player:hurt', () => this.input.rumble(0.6, 0.3, 120));
 
@@ -105,6 +118,10 @@ export class Game {
     // Face into the map from the spawn
     if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
+    // Compile every material up front (parallel where supported) so the first frames don't hitch
+    progress('Compiling shaders…');
+    this.rig.update(0, this.player, false, this.animator.root);
+    await this.renderer.compileAsync(this.scene, this.camera);
     this.renderer.setAnimationLoop((t) => this.frame(t));
   }
 
@@ -155,6 +172,35 @@ export class Game {
     });
     wld.add(worldCfg, 'time', ['morning', 'noon', 'dusk', 'overcast']).name('Time of day').onChange((t: TimeOfDay) => this.world.dayNight.set(t));
     for (const [k, v] of Object.entries(this.world.stats())) wld.add({ [k]: v }, k).disable();
+
+    const aiF = this.gui.addFolder('AI');
+    const aiCfg = { difficulty: this.ai.difficultyId as DifficultyId };
+    aiF
+      .add(aiCfg, 'difficulty', Object.fromEntries(Object.values(DIFFICULTIES).map((d) => [d.label, d.id])))
+      .name('Difficulty (respawns)')
+      .onChange((id: DifficultyId) => {
+        Settings.set('difficulty', id);
+        this.ai.setDifficulty(id, false);
+        this.ai.clear();
+        this.ai.populate(this.player.renderCenter);
+      });
+    aiF.add(this.ai, 'enabled').name('AI enabled');
+    const spawnAhead = (kind: BotKind, n = 1, dist = 25) => {
+      for (let i = 0; i < n; i++) {
+        const fwd = new THREE.Vector3(-Math.sin(this.rig.yaw), 0, -Math.cos(this.rig.yaw));
+        const p = this.player.renderCenter.clone().addScaledVector(fwd, dist).add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6));
+        p.y = this.world.heightAt ? this.world.heightAt(p.x, p.z) : 0;
+        this.ai.spawn(kind, p, { facing: this.rig.yaw + Math.PI, dormant: false, route: [p.clone(), p.clone().add(new THREE.Vector3(30, 0, 0)), p.clone().add(new THREE.Vector3(15, 0, 25))] });
+      }
+    };
+    aiF.add({ f: () => spawnAhead('tick', 4, 30) }, 'f').name('Spawn Tick pack');
+    aiF.add({ f: () => spawnAhead('wasp', 1, 40) }, 'f').name('Spawn Wasp');
+    aiF.add({ f: () => spawnAhead('sentinel', 1, 35) }, 'f').name('Spawn Sentinel');
+    aiF.add({ f: () => spawnAhead('raider', 1, 45) }, 'f').name('Spawn Raider');
+    aiF.add({ f: () => this.ai.clear() }, 'f').name('Remove all bots');
+    aiF.add({ f: () => this.ai.toggleNavDebug(this.player.renderCenter) }, 'f').name('Toggle nav grid (40 m)');
+    aiF.add({ navMs: Math.round(this.ai.navBuildMs) }, 'navMs').name('Nav build ms').disable();
+    aiF.add({ f: () => this.combat.health.reset() }, 'f').name('God refill');
 
     const move = this.gui.addFolder('Movement tuning');
     move.add(Tuning, 'jogSpeed', 2, 7, 0.1);
@@ -218,6 +264,7 @@ export class Game {
     for (let i = 0; i < steps; i++) {
       this.player.step();
       this.world.step();
+      this.ai.step(FIXED_DT);
       this.ballistics.step(FIXED_DT);
       this.physics.step();
       this.recoverFallThrough();
@@ -229,6 +276,8 @@ export class Game {
     this.animator.update(dt, this.player, this.rig.pitch, this.combat.pose);
     this.rig.update(dt, this.player, aiming, this.animator.root);
     this.world.update(dt, this.camera, this.player.renderCenter);
+    this.ai.update(dt, this.player.renderCenter, this.time.alpha);
+    Sfx.listener.copy(this.camera.position);
     this.ballistics.render();
     this.effects.update(dt);
 

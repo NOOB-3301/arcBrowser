@@ -15,6 +15,7 @@ export interface SettingsData {
   aimAssist: number;
   rumble: boolean;
   showDebug: boolean;
+  difficulty: 'recruit' | 'veteran' | 'elite' | 'nightmare';
 }
 
 const STORAGE_KEY = 'rustfall.settings.v1';
@@ -32,6 +33,7 @@ const DEFAULTS: SettingsData = {
   aimAssist: 0.5,
   rumble: true,
   showDebug: true,
+  difficulty: 'veteran',
 };
 
 function load(): SettingsData {

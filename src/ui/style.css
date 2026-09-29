@@ -208,3 +208,11 @@ kbd {
 }
 .loading h1 { margin: 0; font-size: 48px; letter-spacing: 0.3em; font-weight: 900; }
 .loading p { margin: 0; color: var(--ui-dim); }
+
+.dmg-dirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.dmg-dir {
+  position: absolute; left: -90px; top: -90px; width: 180px; height: 180px; border-radius: 50%;
+  border-top: 5px solid rgba(230, 40, 20, 0.9); filter: drop-shadow(0 0 4px rgba(255, 40, 20, 0.8));
+  -webkit-mask: linear-gradient(90deg, transparent 30%, #000 45%, #000 55%, transparent 70%);
+  mask: linear-gradient(90deg, transparent 30%, #000 45%, #000 55%, transparent 70%);
+}

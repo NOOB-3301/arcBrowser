@@ -29,6 +29,55 @@ const SURFACE_FX: Record<Surface, { color: string; count: number; speed: number;
   machine: { color: '#7fd4ff', count: 14, speed: 6, sparks: true },
 };
 
+/** Large soft particles (fire, smoke) for explosions. */
+class PuffSystem {
+  private items: { pos: THREE.Vector3; vel: THREE.Vector3; life: number; max: number; c0: THREE.Color; c1: THREE.Color; rise: number }[] = [];
+  private geo = new THREE.BufferGeometry();
+  private pos = new Float32Array(600 * 3);
+  private col = new Float32Array(600 * 3);
+  readonly points: THREE.Points;
+
+  constructor(scene: THREE.Scene) {
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
+    this.points = new THREE.Points(
+      this.geo,
+      new THREE.PointsMaterial({ size: 1.6, vertexColors: true, transparent: true, opacity: 0.75, depthWrite: false, map: radialTexture(), sizeAttenuation: true }),
+    );
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+  }
+
+  spawn(pos: THREE.Vector3, vel: THREE.Vector3, life: number, c0: string, c1: string, rise: number): void {
+    if (this.items.length >= 600) this.items.shift();
+    this.items.push({ pos: pos.clone(), vel, life, max: life, c0: new THREE.Color(c0), c1: new THREE.Color(c1), rise });
+  }
+
+  update(dt: number): void {
+    let n = 0;
+    const c = new THREE.Color();
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const p = this.items[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.items.splice(i, 1);
+        continue;
+      }
+      p.vel.multiplyScalar(1 - 2.5 * dt);
+      p.vel.y += p.rise * dt;
+      p.pos.addScaledVector(p.vel, dt);
+      const k = p.life / p.max;
+      c.copy(p.c1).lerp(p.c0, k).multiplyScalar(Math.min(1, k * 2));
+      this.pos.set([p.pos.x, p.pos.y, p.pos.z], n * 3);
+      this.col.set([c.r, c.g, c.b], n * 3);
+      n++;
+    }
+    this.geo.setDrawRange(0, n);
+    (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (this.geo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+  }
+}
+
 /**
  * Pooled combat FX: tracers, muzzle flashes, impact particles, bullet decals,
  * lightning arcs. One draw call per effect type.
@@ -57,6 +106,11 @@ export class Effects {
   private decals: THREE.InstancedMesh;
   private decalIndex = 0;
   private dummy = new THREE.Object3D();
+
+  // Explosions
+  private puffs: PuffSystem;
+  private boomLight = new THREE.PointLight('#ffaa55', 0, 40, 2);
+  private boomT = 0;
 
   // Lightning
   private bolts: Bolt[] = [];
@@ -107,6 +161,28 @@ export class Effects {
     );
     this.boltLines.frustumCulled = false;
     scene.add(this.boltLines);
+    this.puffs = new PuffSystem(scene);
+    scene.add(this.boomLight);
+  }
+
+  /** Fireball + smoke + debris sparks + light flash. */
+  explosion(pos: THREE.Vector3, size = 1): void {
+    for (let i = 0; i < 18 * size; i++) {
+      this.puffs.spawn(pos, randomUnit().multiplyScalar(4 + Math.random() * 6 * size), 0.35 + Math.random() * 0.3, '#fff0b0', '#c04010', 2);
+    }
+    for (let i = 0; i < 14 * size; i++) {
+      const v = randomUnit().multiplyScalar(2 + Math.random() * 3 * size);
+      v.y = Math.abs(v.y) + 1;
+      this.puffs.spawn(pos.clone().add(randomUnit().multiplyScalar(0.5)), v, 1.4 + Math.random() * 1.2, '#5a5550', '#2a2826', 1.2);
+    }
+    for (let i = 0; i < 24; i++) {
+      const v = randomUnit().multiplyScalar(10 + Math.random() * 8);
+      v.y = Math.abs(v.y) * 1.2;
+      this.spawnParticle(pos, v, new THREE.Color('#ffd070'), 0.6, 1);
+    }
+    this.boomLight.position.copy(pos).add(new THREE.Vector3(0, 1, 0));
+    this.boomLight.intensity = 60 * size;
+    this.boomT = 0.25;
   }
 
   // ---------------------------------------------------------------- API
@@ -197,6 +273,10 @@ export class Effects {
     this.pGeo.setDrawRange(0, n);
     (this.pGeo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     (this.pGeo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+
+    this.puffs.update(dt);
+    this.boomT -= dt;
+    this.boomLight.intensity = this.boomT > 0 ? this.boomLight.intensity * (1 - 8 * dt) : 0;
 
     // Bolts
     let bn = 0;

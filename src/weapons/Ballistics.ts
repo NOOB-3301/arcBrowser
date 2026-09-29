@@ -20,7 +20,11 @@ export interface ProjectileSpec {
   penetration: number;
   headMultiplier: number;
   team: Team;
+  faction: string;
+  attacker?: import('../combat/Damage').Damageable;
   shooter?: RAPIER.Collider;
+  /** Exclude every collider of the shooter's body (multi-collider bots). */
+  shooterBody?: RAPIER.RigidBody;
   byPlayer: boolean;
   weaponId: string;
   color: number;
@@ -75,7 +79,7 @@ export class Ballistics {
       const len = seg.length();
       if (len > 1e-6) {
         seg.divideScalar(len);
-        const hit = this.physics.raycast(p.pos, seg, len, p.shooter);
+        const hit = this.physics.raycast(p.pos, seg, len, p.shooter, p.shooterBody);
         if (hit) {
           this.resolveHit(p, hit.point, hit.normal, hit.collider, p.travelled + hit.distance);
           this.live.splice(i, 1);
@@ -110,6 +114,8 @@ export class Ballistics {
       penetration: p.penetration,
       headMultiplier: p.headMultiplier,
       team: p.team,
+      faction: p.faction,
+      attacker: p.attacker,
       weaponId: p.weaponId,
       origin: p.origin,
       direction: p.vel.clone().normalize(),
@@ -128,7 +134,7 @@ export class Ballistics {
       const candidates: { t: typeof result.target; d: number; aim: THREE.Vector3 }[] = [];
       const pts: THREE.Vector3[] = [];
       for (const t of this.registry.targets) {
-        if (t === result.target || !t.health.alive || t.team === p.team) continue;
+        if (t === result.target || !t.health.alive || t.faction === p.faction || t.faction === 'neutral') continue;
         pts.length = 0;
         t.aimPoints(pts);
         if (!pts.length) continue;

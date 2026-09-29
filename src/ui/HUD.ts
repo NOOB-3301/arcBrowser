@@ -43,7 +43,7 @@ export class HUD {
   constructor(private input: Input) {
     this.root = document.getElementById('ui')!;
     this.root.innerHTML = `
-      <div class="hud-tag">RUSTFALL <span>M4 · Ironvale Basin</span></div>
+      <div class="hud-tag">RUSTFALL <span>M5 · AI</span></div>
       <div class="hud-mode"></div>
       <div class="crosshair"><i></i><i></i><i></i><i></i></div>
       <div class="stamina"><div class="stamina-fill"></div></div>
