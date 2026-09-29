@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { Assets, cloneMaterials } from '../../assets/Assets';
+import type { AssetKey } from '../../assets/manifest';
 
 const hull = () => new THREE.MeshStandardMaterial({ color: '#4b5157', roughness: 0.45, metalness: 0.75 });
 const plate = () => new THREE.MeshStandardMaterial({ color: '#8b8f86', roughness: 0.5, metalness: 0.6 });
@@ -14,14 +16,14 @@ function mesh(g: THREE.BufferGeometry, m: THREE.Material, parent: THREE.Object3D
 
 export interface TickModel {
   root: THREE.Group;
-  legs: THREE.Group[];
+  legs: THREE.Object3D[];
   core: THREE.Mesh;
   coreMat: THREE.MeshStandardMaterial;
   mats: THREE.MeshStandardMaterial[];
 }
 
 /** Six-legged crawler with an exposed core on its back. */
-export function tickModel(): TickModel {
+function tickModelProcedural(): TickModel {
   const root = new THREE.Group();
   const h = hull();
   const p = plate();
@@ -50,14 +52,14 @@ export function tickModel(): TickModel {
 
 export interface WaspModel {
   root: THREE.Group;
-  rotors: THREE.Mesh[];
-  body: THREE.Group;
+  rotors: THREE.Object3D[];
+  body: THREE.Object3D;
   mats: THREE.MeshStandardMaterial[];
   eye: THREE.MeshStandardMaterial;
 }
 
 /** Quad-rotor strike drone. Rotor hubs are weak points. */
-export function waspModel(): WaspModel {
+function waspModelProcedural(): WaspModel {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
@@ -69,7 +71,7 @@ export function waspModel(): WaspModel {
   mesh(new THREE.BoxGeometry(0.5, 0.1, 0.7), p, body, 0, 0.26, 0);
   mesh(new THREE.SphereGeometry(0.1, 10, 8), eye, body, 0, -0.02, -0.52);
   mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 6), h, body, 0, -0.25, -0.2).rotation.x = Math.PI / 2;
-  const rotors: THREE.Mesh[] = [];
+  const rotors: THREE.Object3D[] = [];
   const rotorMat = new THREE.MeshStandardMaterial({ color: '#222', transparent: true, opacity: 0.55, roughness: 0.4 });
   for (const [x, z] of [[-0.75, -0.6], [0.75, -0.6], [0.75, 0.6], [-0.75, 0.6]]) {
     const arm = mesh(new THREE.BoxGeometry(Math.hypot(x, z), 0.06, 0.08), h, body, x / 2, 0.08, z / 2);
@@ -84,7 +86,7 @@ export function waspModel(): WaspModel {
 
 export interface SentinelModel {
   root: THREE.Group;
-  head: THREE.Group;
+  head: THREE.Object3D;
   eyeMat: THREE.MeshStandardMaterial;
   laser: THREE.Line;
   laserMat: THREE.LineBasicMaterial;
@@ -92,7 +94,7 @@ export interface SentinelModel {
 }
 
 /** Tripod turret with a scanning laser eye. */
-export function sentinelModel(): SentinelModel {
+function sentinelModelProcedural(): SentinelModel {
   const root = new THREE.Group();
   const h = hull();
   const p = plate();
@@ -115,4 +117,86 @@ export function sentinelModel(): SentinelModel {
   laser.frustumCulled = false;
   root.add(laser);
   return { root, head, eyeMat, laser, laserMat, mats: [h, p] };
+}
+
+// ---------------------------------------------------------------------------------------------
+// GLB-backed factories (Blender-modelled ARC units, see CREDITS.md). Same shapes as the procedural
+// stand-ins above, which remain as fallbacks if a GLB failed to load.
+
+export interface ArcAsset {
+  /** Wrapper group to position/rotate (the GLB's origin = unit origin on the ground, facing -Z). */
+  root: THREE.Group;
+  /** Every named node in the clone (e.g. `stalker_leg_fl_lower`, `colossus_plate_3`). */
+  nodes: Record<string, THREE.Object3D>;
+  /** Per-instance material clones by name: A_hull, A_plate, A_dark, A_joint, A_core, A_eye, A_blur. */
+  mats: Record<string, THREE.MeshStandardMaterial>;
+}
+
+/** Clones an ARC GLB with per-instance materials and a name -> node index. Null if not loaded. */
+export function arcAsset(key: AssetKey): ArcAsset | null {
+  if (!Assets.has(key)) return null;
+  const scene = Assets.clone(key);
+  const root = new THREE.Group();
+  root.add(scene);
+  const mats: Record<string, THREE.MeshStandardMaterial> = {};
+  for (const m of cloneMaterials(scene)) mats[m.name] = m;
+  const nodes: Record<string, THREE.Object3D> = {};
+  scene.traverse((o) => {
+    if (o.name) nodes[o.name] = o;
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) {
+      const blur = (mesh.material as THREE.MeshStandardMaterial).name === 'A_blur';
+      mesh.castShadow = !blur;
+      mesh.receiveShadow = !blur;
+    }
+  });
+  // Worn-white ARC shell: brighter albedo, mostly dielectric paint so it doesn't read dark under the sky env.
+  if (mats.A_hull) {
+    mats.A_hull.color.setRGB(1, 0.98, 0.94);
+    mats.A_hull.metalness = 0.08;
+  }
+  if (mats.A_plate) mats.A_plate.metalness = 0.1;
+  if (mats.A_blur) {
+    mats.A_blur.transparent = true;
+    mats.A_blur.depthWrite = false;
+  }
+  return { root, nodes, mats };
+}
+
+const flashMats = (a: ArcAsset) => ['A_hull', 'A_plate', 'A_dark', 'A_joint'].map((n) => a.mats[n]).filter(Boolean);
+
+/** Joint-style Euler order so `rotation.x` swings a limb in its own (yawed) frame. */
+function asJoint(o: THREE.Object3D): THREE.Object3D {
+  o.rotation.setFromQuaternion(o.quaternion, 'YXZ');
+  return o;
+}
+
+/** Six-legged crawler with an exposed core on its back. */
+export function tickModel(): TickModel {
+  const a = arcAsset('arc_tick');
+  if (!a) return tickModelProcedural();
+  const legs = [0, 1, 2, 3, 4, 5].map((i) => asJoint(a.nodes[`tick_leg_${i}`]));
+  const core = a.nodes.tick_core as THREE.Mesh;
+  return { root: a.root, legs, core, coreMat: a.mats.A_core, mats: flashMats(a) };
+}
+
+/** Quad-rotor strike drone. Rotor hubs are weak points. */
+export function waspModel(): WaspModel {
+  const a = arcAsset('arc_wasp');
+  if (!a) return waspModelProcedural();
+  const rotors = [0, 1, 2, 3].map((i) => a.nodes[`wasp_rotor_${i}`]);
+  return { root: a.root, rotors, body: a.nodes.wasp_body, mats: flashMats(a), eye: a.mats.A_eye };
+}
+
+/** Tripod turret with a scanning laser eye. */
+export function sentinelModel(): SentinelModel {
+  const a = arcAsset('arc_sentinel');
+  if (!a) return sentinelModelProcedural();
+  const head = a.nodes.sentinel_head;
+  head.rotation.set(0, 0, 0, 'YXZ');
+  const laserMat = new THREE.LineBasicMaterial({ color: '#ff9a40', transparent: true, opacity: 0.8 });
+  const laser = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]), laserMat);
+  laser.frustumCulled = false;
+  a.root.add(laser);
+  return { root: a.root, head, eyeMat: a.mats.A_eye, laser, laserMat, mats: flashMats(a) };
 }
