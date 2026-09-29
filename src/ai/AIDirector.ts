@@ -10,6 +10,9 @@ import { Tick } from './arc/Tick';
 import { Wasp } from './arc/Wasp';
 import { Sentinel } from './arc/Sentinel';
 import { RaiderBot } from './raider/RaiderBot';
+import { Stalker } from './arc/Stalker'; // W4
+import { Colossus } from './arc/Colossus'; // W4
+import { populateShardcoast } from './Population2'; // W4
 import type { GameWorld } from '../world/World';
 import type { Physics } from '../physics/Physics';
 import type { DamageRegistry } from '../combat/Damage';
@@ -79,6 +82,12 @@ export class AIDirector {
       }
       Events.emit('toast', 'ARC alarm triggered');
     });
+    // W4: loot hook — every ARC kill (the Colossus emits its own) announces a drop
+    Events.on('kill', (r: { target: Damageable }) => {
+      const b = r.target as Bot;
+      if (!this.bots.includes(b) || b.faction !== 'arc' || b.kind === 'colossus') return;
+      Events.emit('arc:drop', { kind: b.kind, pos: b.pos.clone() });
+    });
   }
 
   get difficultyId(): DifficultyId {
@@ -121,6 +130,16 @@ export class AIDirector {
         bot = new RaiderBot(ctx, p.add(new THREE.Vector3(0, 0.1, 0)), this.raiderIndex++);
         break;
       }
+      // W4: new ARC kinds
+      case 'stalker': {
+        const p = ctx.nav.nearestWalkable(pos.x, pos.z, 10);
+        if (!p) return null;
+        bot = new Stalker(ctx, p, opts.facing ?? Math.random() * Math.PI * 2);
+        break;
+      }
+      case 'colossus':
+        bot = new Colossus(ctx, pos.clone().setY(ctx.heightAt(pos.x, pos.z)), opts.route ?? [], opts.facing ?? 0);
+        break;
     }
     this.bots.push(bot);
     return bot;
@@ -130,6 +149,7 @@ export class AIDirector {
   populate(playerSpawn?: THREE.Vector3): void {
     const map = this.world.map;
     if (!map) return; // arena: spawn from the debug menu
+    if (map.def.id === 'shardcoast') return populateShardcoast(this, map, playerSpawn); // W4: per-map tables
     const d = this.ctx.difficulty;
     const def = map.def;
     const hm = map.hm;
@@ -199,10 +219,22 @@ export class AIDirector {
       b.focusDist = b.pos.distanceTo(focus);
       if (!b.health.alive) {
         b.deadT += dt;
-        if (b.deadT > CORPSE_TIME || (b.kind === 'tick' && b.deadT > 4)) {
+        // W3: lootable corpses (flagged by the loot system) persist for the raid
+        const pinned = (b as { lootPinned?: boolean }).lootPinned === true;
+        if (!pinned && (b.deadT > CORPSE_TIME || (b.kind === 'tick' && b.deadT > 4))) {
           b.dispose();
           this.bots.splice(i, 1);
           continue;
+        }
+      } else if (b.stunT > 0) {
+        // W4: EMP stun — no thinking, crackling arcs
+        b.stunT -= dt;
+        if (Math.random() < dt * 12) {
+          const pts: THREE.Vector3[] = [];
+          b.aimPoints(pts);
+          const c = pts[0] ?? b.pos;
+          const r = () => new THREE.Vector3((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
+          ctx.effects.lightning(c.clone().add(r()), c.clone().add(r()), 0x8fd8ff);
         }
       } else if (this.enabled && (b.focusDist < SLEEP_DIST || b.kind === 'raider')) {
         b.think(dt);
@@ -214,7 +246,7 @@ export class AIDirector {
   /** Fixed step (movement integration). */
   step(dt: number): void {
     if (!this.enabled) return;
-    for (const b of this.bots) b.fixedStep(dt);
+    for (const b of this.bots) if (b.stunT <= 0) b.fixedStep(dt); // W4: stunned units freeze
   }
 
   // ---------------------------------------------------------------- debug
@@ -231,7 +263,7 @@ export class AIDirector {
   }
 
   stats(): Record<string, number> {
-    const s: Record<string, number> = { tick: 0, wasp: 0, sentinel: 0, raider: 0 };
+    const s: Record<string, number> = { tick: 0, wasp: 0, sentinel: 0, raider: 0, stalker: 0, colossus: 0 }; // W4
     for (const b of this.bots) if (b.health.alive) s[b.kind]++;
     return s;
   }

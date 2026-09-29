@@ -30,6 +30,17 @@ import { HUD } from '../ui/HUD';
 import { AIDirector } from '../ai/AIDirector';
 import { DIFFICULTIES, type DifficultyId } from '../ai/Difficulty';
 import type { BotKind } from '../ai/Bot';
+// W4: throwables, weather, boss bar, Shardcoast
+import { Throwables } from '../weapons/Throwables';
+import { Weather, WEATHER_STATES, type WeatherState } from '../world/Weather';
+import { BossBar, ThrowableWidget } from '../ui/BossBar';
+import { SHARDCOAST } from '../maps/shardcoast';
+import { RaidManager } from '../raid/RaidManager'; // W3
+// W1: renderer / post-processing
+import { RenderGlobals } from '../render/RenderGlobals';
+import { PostFX } from '../render/PostFX';
+import { Quality, QUALITY_PRESETS, setQuality, type QualityLevel } from '../render/Quality';
+import { initTextures } from '../world/Materials';
 
 /** Neutral input used while paused so buffered actions don't fire. */
 const IDLE_INPUT = {
@@ -59,8 +70,16 @@ export class Game {
   private compass!: Compass;
   private mapView: MapView | null = null;
   ai!: AIDirector;
+  /** W3: raid loop + menus (null in the ?map=arena sandbox). */
+  raid: RaidManager | null = null;
   private stats!: Stats;
+  // W4
+  throwables!: Throwables;
+  weather!: Weather;
+  private bossBar!: BossBar;
+  private throwWidget!: ThrowableWidget;
   private gui!: GUI;
+  readonly post: PostFX; // W1
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -72,6 +91,10 @@ export class Game {
     this.renderer.toneMappingExposure = 0.9;
 
     this.camera = new THREE.PerspectiveCamera(Settings.get('fov'), window.innerWidth / window.innerHeight, 0.05, 2600);
+    // W1: quality preset, KTX2 textures, post chain (sets AgX tone mapping + pixel ratio)
+    if (Quality.level !== Settings.get('graphicsQuality')) setQuality(Settings.get('graphicsQuality'));
+    initTextures(this.renderer);
+    this.post = new PostFX(this.renderer, this.scene, this.camera);
     this.input = new Input(canvas);
 
     window.addEventListener('resize', () => this.onResize());
@@ -82,7 +105,7 @@ export class Game {
     if (mapId === 'arena') {
       this.world = new ArenaWorld(this.scene, this.physics, this.registry, this.renderer);
     } else {
-      const w = new MapWorld(this.scene, this.physics, this.renderer, IRONVALE);
+      const w = new MapWorld(this.scene, this.physics, this.renderer, mapId === 'shardcoast' ? SHARDCOAST : IRONVALE); // W4: map selection
       await w.init(progress);
       this.world = w;
     }
@@ -111,13 +134,26 @@ export class Game {
     Events.on('player:shot', () => this.input.rumble(0.15, 0.35, 50));
     Events.on('player:hurt', () => this.input.rumble(0.6, 0.3, 120));
 
+    // W4: throwables + weather + boss bar
+    this.throwables = new Throwables(this.scene, this.physics, this.registry, this.effects, this.rig, this.player, this.combat);
+    this.weather = new Weather(this.scene, this.renderer, this.world.dayNight);
+    const wq = new URLSearchParams(location.search).get('weather');
+    const pick = wq === 'random' ? (['clear', 'clear', 'clear', 'rain', 'rain', 'fog', 'storm'] as WeatherState[])[Math.floor(Math.random() * 7)] : wq;
+    if (pick && (WEATHER_STATES as string[]).includes(pick)) {
+      this.weather.set(pick as WeatherState);
+      this.weather.snap();
+    }
+
     this.hud = new HUD(this.input);
+    this.bossBar = new BossBar();
+    this.throwWidget = new ThrowableWidget(this.throwables, this.input);
     this.combatHud = new CombatHUD(this.camera);
     this.compass = new Compass(this.world.map);
     if (this.world.map) this.mapView = new MapView(this.world.map);
     // Face into the map from the spawn
     if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
+    if (mapId !== 'arena') this.raid = new RaidManager(this); // W3: boots to the main menu
     // Compile every material up front (parallel where supported) so the first frames don't hitch
     progress('Compiling shaders…');
     this.rig.update(0, this.player, false, this.animator.root);
@@ -156,6 +192,16 @@ export class Game {
     bind(inputFolder, 'adsSensitivityMultiplier', 0.2, 1, 0.05);
 
     const view = this.gui.addFolder('View');
+    // W1: graphics quality preset
+    const gq = { q: Quality.level as QualityLevel };
+    view
+      .add(gq, 'q', Object.fromEntries(Object.entries(QUALITY_PRESETS).map(([k, v]) => [v.label, k])))
+      .name('Graphics quality')
+      .onChange((q: QualityLevel) => {
+        Settings.set('graphicsQuality', q);
+        setQuality(q);
+      });
+    view.add(this.post, 'enabled').name('Post-processing');
     bind(view, 'fov', 55, 100, 1);
     bind(view, 'showDebug');
     view
@@ -166,11 +212,16 @@ export class Game {
     const wld = this.gui.addFolder('World');
     const params = new URLSearchParams(location.search);
     const worldCfg = { map: params.get('map') ?? 'ironvale', time: this.world.dayNight.current as TimeOfDay };
-    wld.add(worldCfg, 'map', { 'Ironvale Basin': 'ironvale', 'Test arena + range': 'arena' }).name('Map (reloads)').onChange((m: string) => {
+    wld.add(worldCfg, 'map', { 'Ironvale Basin': 'ironvale', Shardcoast: 'shardcoast', 'Test arena + range': 'arena' }).name('Map (reloads)') // W4: shardcoast option
+      .onChange((m: string) => {
       params.set('map', m);
       location.search = params.toString();
     });
     wld.add(worldCfg, 'time', ['morning', 'noon', 'dusk', 'overcast']).name('Time of day').onChange((t: TimeOfDay) => this.world.dayNight.set(t));
+    // W4: weather
+    const weatherCfg = { weather: this.weather.state };
+    wld.add(weatherCfg, 'weather', WEATHER_STATES).name('Weather').onChange((s: WeatherState) => this.weather.set(s));
+    wld.add({ f: () => this.weather.strike(this.camera.position, 300) }, 'f').name('Lightning strike');
     for (const [k, v] of Object.entries(this.world.stats())) wld.add({ [k]: v }, k).disable();
 
     const aiF = this.gui.addFolder('AI');
@@ -197,6 +248,9 @@ export class Game {
     aiF.add({ f: () => spawnAhead('wasp', 1, 40) }, 'f').name('Spawn Wasp');
     aiF.add({ f: () => spawnAhead('sentinel', 1, 35) }, 'f').name('Spawn Sentinel');
     aiF.add({ f: () => spawnAhead('raider', 1, 45) }, 'f').name('Spawn Raider');
+    aiF.add({ f: () => spawnAhead('stalker', 1, 40) }, 'f').name('Spawn Stalker'); // W4
+    aiF.add({ f: () => spawnAhead('colossus', 1, 70) }, 'f').name('Spawn Colossus'); // W4
+    aiF.add({ f: () => (['frag', 'emp', 'smoke', 'decoy', 'mine'] as const).forEach((id) => this.throwables.add(id, 3)) }, 'f').name('+3 each throwable'); // W4
     aiF.add({ f: () => this.ai.clear() }, 'f').name('Remove all bots');
     aiF.add({ f: () => this.ai.toggleNavDebug(this.player.renderCenter) }, 'f').name('Toggle nav grid (40 m)');
     aiF.add({ navMs: Math.round(this.ai.navBuildMs) }, 'navMs').name('Nav build ms').disable();
@@ -242,9 +296,17 @@ export class Game {
     const dt = this.time.delta;
 
     this.input.update(dt);
+    // W3: pause menu freezes the simulation (solo raid)
+    if (this.raid?.paused) {
+      this.raid.update(dt);
+      this.post.render(dt); // W1 post chain also while paused
+      this.stats.end();
+      this.stats.update();
+      return;
+    }
     const alive = this.combat.health.alive;
     const mapOpen = this.mapView?.open ?? false;
-    const active = this.hud.playing && alive && !mapOpen;
+    const active = this.hud.playing && alive && !mapOpen && !(this.raid?.blocksInput ?? false); // W3
     const aiming = active && this.input.adsAxis > 0.3;
     if (this.input.activeDevice === 'gamepad' && (this.input.pressed('fire') || this.input.pressed('jump'))) Sfx.unlock();
 
@@ -257,6 +319,7 @@ export class Game {
       this.rig.handleInput(this.input, dt, aiming, assist);
     }
     this.combat.update(dt, active ? this.input : IDLE_INPUT, active);
+    this.throwables.update(dt, active ? this.input : IDLE_INPUT, active); // W4
     const facing = aiming || this.combat.combatFacing;
     this.player.frameInput(active ? this.input : IDLE_INPUT, this.rig.moveYaw, this.rig.yaw, facing, dt);
     if (active && this.input.down('fire')) this.player.breakSprint();
@@ -266,6 +329,7 @@ export class Game {
       this.world.step();
       this.ai.step(FIXED_DT);
       this.ballistics.step(FIXED_DT);
+      this.throwables.step(FIXED_DT); // W4
       this.physics.step();
       this.recoverFallThrough();
     }
@@ -280,16 +344,21 @@ export class Game {
     Sfx.listener.copy(this.camera.position);
     this.ballistics.render();
     this.effects.update(dt);
+    this.weather.update(dt, this.camera.position); // W4
+    RenderGlobals.wetness.value = this.weather.wetness; // integration: rain wets terrain + buildings
 
     if (this.mapView) {
-      if (this.hud.playing && this.input.pressed('map')) this.mapView.toggle();
+      if (this.hud.playing && this.input.pressed('map') && !(this.raid?.blocksInput ?? false)) this.mapView.toggle(); // W3
       this.mapView.update(this.player.renderCenter, this.rig.yaw);
     }
     this.compass.update(this.rig.yaw, this.player.renderCenter);
 
+    this.raid?.update(dt); // W3
     this.hud.update(dt, Settings.get('showDebug'), this.player, this.rig);
     this.combatHud.update(dt, this.combat, this.rig, this.player);
-    this.renderer.render(this.scene, this.camera);
+    this.bossBar.update(dt, this.ai.bots, this.player.renderCenter); // W4
+    this.throwWidget.update(dt); // W4
+    this.post.render(dt); // W1: was renderer.render(scene, camera)
     this.stats.end();
     this.stats.update();
   }
@@ -306,6 +375,6 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.post.setSize(window.innerWidth, window.innerHeight); // W1
   }
 }

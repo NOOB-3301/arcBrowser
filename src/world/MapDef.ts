@@ -42,7 +42,9 @@ export interface HillDef {
   height: number;
 }
 
-export type PoiKind = 'dam' | 'pumping' | 'village' | 'town' | 'farm' | 'containers' | 'radio';
+export type PoiKind = 'dam' | 'pumping' | 'village' | 'town' | 'farm' | 'containers' | 'radio'
+  // W4: Shardcoast POIs (built by POIs2)
+  | 'city' | 'spaceport' | 'lighthouse' | 'shipwreck' | 'overpass';
 
 export interface PoiDef {
   id: string;
@@ -94,4 +96,27 @@ export interface MapDef {
   pylons: Vec2[];
   bridges: { center: Vec2; rot: number; length: number; width: number }[];
   dam?: { z: number; x0: number; x1: number; top: number; breach: [number, number] };
+  /** W4: sea coast. Sea lies on the +x side at `waterLevel` (sea level). */
+  coast?: CoastDef;
+}
+
+/** W4: coastline description (sea on the +x side of the map). */
+export interface CoastDef {
+  /** Mean shoreline x. */
+  shore: number;
+  /** Shoreline meander amplitude (m). */
+  wobble: number;
+  /** Beach width inland of the shoreline. */
+  beach: number;
+  /** Sea floor height far offshore, and the width of the shelf reaching it. */
+  seaFloor: number;
+  shelf: number;
+  /** Stretches of coast (z ranges) that end in cliffs of the given height above the land. */
+  cliffs: { z0: number; z1: number; height: number }[];
+  /** Headlands pushing the shoreline seaward (gaussian bump). */
+  headlands: { z: number; width: number; reach: number }[];
+  /** Dune height in the band behind the beach. */
+  dunes: number;
+  /** Extra sandy areas inland (sand splat + drifts). */
+  sandy: { center: Vec2; radius: number }[];
 }

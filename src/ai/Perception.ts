@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { hostile, type Damageable } from '../combat/Damage';
 import type { AIContext } from './AIContext';
+import { SenseMods } from './SenseMods'; // W4: weather + smoke
 
 export interface Awareness {
   /** 0..1 detection meter. */
@@ -76,7 +77,7 @@ export class Perception {
     const step = this.acc;
     this.acc = 0;
     const cosHalf = Math.cos(THREE.MathUtils.degToRad(this.opts.fovDeg / 2));
-    const range = this.opts.range;
+    const range = this.opts.range * SenseMods.vision; // W4: weather vision multiplier
     const body = this.bodyOf();
 
     for (const t of ctx.registry.targets) {
@@ -103,6 +104,7 @@ export class Perception {
         for (const p of _pts) {
           _to.subVectors(p, eye);
           const pd = _to.length();
+          if (SenseMods.smokeBlocks(eye, p)) continue; // W4: smoke blocks line of sight
           const hit = ctx.physics.raycast(eye, _to.divideScalar(pd), pd + 0.5, undefined, body);
           if (!hit || ctx.registry.lookup(hit.collider) === t) {
             seen = true;
@@ -168,7 +170,8 @@ export class Perception {
   /** Noise heard: footsteps, gunshots, explosions. */
   hear(ctx: AIContext, pos: THREE.Vector3, radius: number, eye: THREE.Vector3, source?: Damageable): void {
     const d = pos.distanceTo(eye);
-    if (d > radius * this.opts.hearing) return;
+    const hearing = this.opts.hearing * SenseMods.hearing; // W4: weather hearing multiplier
+    if (d > radius * hearing) return;
     if (source) {
       if (source === this.owner || !hostile(source.faction, this.owner.faction) || source.faction === 'neutral') return;
       let a = this.known.get(source);
@@ -177,7 +180,7 @@ export class Perception {
         this.known.set(source, a);
       }
       // Loud + close noises almost confirm; distant ones raise suspicion
-      a.level = Math.min(1, a.level + (1 - d / (radius * this.opts.hearing)) * (radius > 40 ? 0.9 : 0.35));
+      a.level = Math.min(1, a.level + (1 - d / (radius * hearing)) * (radius > 40 ? 0.9 : 0.35));
       if (a.level >= 1) a.confirmed = true;
       a.lastPos.copy(pos);
       a.lastSeen = Math.max(a.lastSeen, ctx.time - 2);
