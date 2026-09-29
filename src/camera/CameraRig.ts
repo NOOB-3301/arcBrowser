@@ -136,9 +136,13 @@ export class CameraRig {
     this.pivotY += (feet.y - this.pivotY) * damp(player.grounded ? 18 : 30);
     if (Math.abs(feet.y - this.pivotY) > 1.5) this.pivotY = feet.y;
 
-    // landing dip spring
-    this.dipVel += (-this.dip * 120 - this.dipVel * 14) * dt;
-    this.dip += this.dipVel * dt;
+    // Landing dip spring: fixed sub-steps (semi-implicit) so frame hitches can't blow it up
+    for (let rem = Math.min(dt, 0.1); rem > 1e-6; rem -= 1 / 240) {
+      const h = Math.min(rem, 1 / 240);
+      this.dipVel += (-this.dip * 120 - this.dipVel * 14) * h;
+      this.dip += this.dipVel * h;
+    }
+    this.dip = THREE.MathUtils.clamp(this.dip, -2, 2);
     this.pivot.set(feet.x, this.pivotY + this.eyeHeight + this.dip * 0.12, feet.z);
 
     // --- orientation

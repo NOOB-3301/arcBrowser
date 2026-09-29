@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import GUI from 'lil-gui';
 import Stats from 'stats-gl';
 import { Time } from './Time';
@@ -7,11 +6,9 @@ import { Input } from './Input';
 import { Settings } from './Settings';
 import { Events } from './Events';
 import { Physics } from '../physics/Physics';
-import { TestArena } from '../world/TestArena';
 import { PlayerController } from '../player/PlayerController';
 import { Animator } from '../player/Animator';
 import { CameraRig } from '../camera/CameraRig';
-import { Traversal } from '../world/Traversal';
 import { Tuning } from '../player/MovementStates';
 import { DamageRegistry } from '../combat/Damage';
 import { Effects } from '../combat/Effects';
@@ -19,8 +16,14 @@ import { AimAssist } from '../combat/AimAssist';
 import { Ballistics } from '../weapons/Ballistics';
 import { WEAPONS, RARITY, type Rarity } from '../weapons/WeaponDefs';
 import { PlayerCombat } from '../player/PlayerCombat';
-import { TargetRange } from '../world/TargetRange';
+import { ArenaWorld } from '../world/ArenaWorld';
+import { MapWorld } from '../world/MapWorld';
+import type { GameWorld } from '../world/World';
+import type { TimeOfDay } from '../world/DayNight';
+import { IRONVALE } from '../maps/ironvale';
 import { CombatHUD } from '../ui/CombatHUD';
+import { Compass } from '../ui/Compass';
+import { MapView } from '../ui/MapView';
 import { Sfx } from '../audio/Sfx';
 import { FIXED_DT } from './Time';
 import { HUD } from '../ui/HUD';
@@ -38,9 +41,7 @@ export class Game {
   readonly time = new Time();
   readonly physics = new Physics();
   readonly input: Input;
-  private sun!: THREE.DirectionalLight;
-  private sunDir = new THREE.Vector3();
-  readonly traversal = new Traversal();
+  world!: GameWorld;
   player!: PlayerController;
   animator!: Animator;
   rig!: CameraRig;
@@ -49,10 +50,11 @@ export class Game {
   effects!: Effects;
   ballistics!: Ballistics;
   combat!: PlayerCombat;
-  range!: TargetRange;
   private aimAssist!: AimAssist;
   private combatHud!: CombatHUD;
   private hud!: HUD;
+  private compass!: Compass;
+  private mapView: MapView | null = null;
   private stats!: Stats;
   private gui!: GUI;
 
@@ -65,20 +67,23 @@ export class Game {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.9;
 
-    this.camera = new THREE.PerspectiveCamera(Settings.get('fov'), window.innerWidth / window.innerHeight, 0.05, 3000);
+    this.camera = new THREE.PerspectiveCamera(Settings.get('fov'), window.innerWidth / window.innerHeight, 0.05, 2600);
     this.input = new Input(canvas);
 
     window.addEventListener('resize', () => this.onResize());
   }
 
-  async init(): Promise<void> {
+  async init(mapId: string, progress: (msg: string) => void = () => {}): Promise<void> {
     await this.physics.init();
-    this.buildEnvironment();
-
-    const arena = new TestArena(this.scene, this.physics, this.traversal);
-    arena.build();
-    this.spawn.copy(arena.spawn).setY(0);
-    this.player = new PlayerController(this.physics, this.traversal, this.spawn);
+    if (mapId === 'arena') {
+      this.world = new ArenaWorld(this.scene, this.physics, this.registry, this.renderer);
+    } else {
+      const w = new MapWorld(this.scene, this.physics, this.renderer, IRONVALE);
+      await w.init(progress);
+      this.world = w;
+    }
+    this.spawn.copy(this.world.spawn);
+    this.player = new PlayerController(this.physics, this.world.traversal, this.spawn);
     this.animator = new Animator(this.scene);
     this.rig = new CameraRig(this.camera, this.physics);
     Events.on('player:fallDamage', ({ amount }: { amount: number }) => {
@@ -88,7 +93,6 @@ export class Game {
 
     this.effects = new Effects(this.scene);
     this.ballistics = new Ballistics(this.physics, this.registry, this.effects);
-    this.range = new TargetRange(this.scene, this.physics, this.registry);
     this.combat = new PlayerCombat(this.player, this.animator, this.rig, this.camera, this.ballistics, this.effects, this.registry, this.spawn);
     this.aimAssist = new AimAssist(this.registry, this.physics);
     Events.on('player:shot', () => this.input.rumble(0.15, 0.35, 50));
@@ -96,37 +100,12 @@ export class Game {
 
     this.hud = new HUD(this.input);
     this.combatHud = new CombatHUD(this.camera);
+    this.compass = new Compass(this.world.map);
+    if (this.world.map) this.mapView = new MapView(this.world.map);
+    // Face into the map from the spawn
+    if (this.world.map) this.rig.yaw = Math.atan2(this.spawn.x, this.spawn.z);
     this.initDebug();
     this.renderer.setAnimationLoop((t) => this.frame(t));
-  }
-
-  private buildEnvironment(): void {
-    const sky = new Sky();
-    sky.scale.setScalar(4000);
-    const u = sky.material.uniforms;
-    u.turbidity.value = 6;
-    u.rayleigh.value = 1.4;
-    u.mieCoefficient.value = 0.006;
-    u.mieDirectionalG.value = 0.85;
-    const sunDir = this.sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(58), THREE.MathUtils.degToRad(35));
-    u.sunPosition.value.copy(sunDir);
-    this.scene.add(sky);
-
-    this.scene.fog = new THREE.Fog('#b9b3a3', 80, 900);
-
-    this.scene.add(new THREE.HemisphereLight('#dfe8f0', '#4a4436', 0.9));
-    this.sun = new THREE.DirectionalLight('#fff1dc', 2.6);
-    this.sun.position.copy(sunDir).multiplyScalar(80);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const s = this.sun.shadow.camera;
-    s.left = s.bottom = -60;
-    s.right = s.top = 60;
-    s.near = 1;
-    s.far = 250;
-    this.sun.shadow.bias = -0.0005;
-    this.sun.shadow.normalBias = 0.03;
-    this.scene.add(this.sun, this.sun.target);
   }
 
   private initDebug(): void {
@@ -157,6 +136,7 @@ export class Game {
     bind(inputFolder, 'stickCurve', 1, 3, 0.1);
     bind(inputFolder, 'invertY');
     bind(inputFolder, 'rumble');
+    bind(inputFolder, 'adsSensitivityMultiplier', 0.2, 1, 0.05);
 
     const view = this.gui.addFolder('View');
     bind(view, 'fov', 55, 100, 1);
@@ -165,7 +145,16 @@ export class Game {
       .add({ physicsDebug: false }, 'physicsDebug')
       .name('physics colliders')
       .onChange((on: boolean) => this.physics.setDebug(this.scene, on));
-    bind(inputFolder, 'adsSensitivityMultiplier', 0.2, 1, 0.05);
+
+    const wld = this.gui.addFolder('World');
+    const params = new URLSearchParams(location.search);
+    const worldCfg = { map: params.get('map') ?? 'ironvale', time: this.world.dayNight.current as TimeOfDay };
+    wld.add(worldCfg, 'map', { 'Ironvale Basin': 'ironvale', 'Test arena + range': 'arena' }).name('Map (reloads)').onChange((m: string) => {
+      params.set('map', m);
+      location.search = params.toString();
+    });
+    wld.add(worldCfg, 'time', ['morning', 'noon', 'dusk', 'overcast']).name('Time of day').onChange((t: TimeOfDay) => this.world.dayNight.set(t));
+    for (const [k, v] of Object.entries(this.world.stats())) wld.add({ [k]: v }, k).disable();
 
     const move = this.gui.addFolder('Movement tuning');
     move.add(Tuning, 'jogSpeed', 2, 7, 0.1);
@@ -192,15 +181,11 @@ export class Game {
     wf.add(cfg, 'rarity', rarities).name('Rarity').onChange(reequip);
     wf.add(this.combat.pouch, 'infinite').name('Infinite reserve');
     bind(wf, 'aimAssist', 0, 1, 0.05);
-    wf.add({ refill: () => { this.combat.health.reset(); } }, 'refill').name('Refill health + shield');
+    wf.add({ refill: () => this.combat.health.reset() }, 'refill').name('Refill health + shield');
 
     const tp = this.gui.addFolder('Teleport');
-    const spots: Record<string, [number, number, number]> = {
-      Spawn: [0, 0, 8], Range: [70, 0, 4], Ledges: [-10, 0, -4], Ramps: [21, 0, -2], Stairs: [-30, 0, 13],
-      'Vault walls': [-9, 0, 50], 'Slide hill (top)': [-70, 5, 22], Ladder: [-45, 0, -23], Corridor: [41.5, 0, 12],
-    };
-    for (const [name, [x, y, z]] of Object.entries(spots)) {
-      tp.add({ go: () => this.player.teleport(new THREE.Vector3(x, y + 0.1, z)) }, 'go').name(name);
+    for (const [name, pos] of Object.entries(this.world.spots)) {
+      tp.add({ go: () => this.player.teleport(pos.clone().add(new THREE.Vector3(0, 0.1, 0))) }, 'go').name(name);
     }
     this.gui.close();
   }
@@ -212,14 +197,16 @@ export class Game {
 
     this.input.update(dt);
     const alive = this.combat.health.alive;
-    const active = this.hud.playing && alive;
+    const mapOpen = this.mapView?.open ?? false;
+    const active = this.hud.playing && alive && !mapOpen;
     const aiming = active && this.input.adsAxis > 0.3;
     if (this.input.activeDevice === 'gamepad' && (this.input.pressed('fire') || this.input.pressed('jump'))) Sfx.unlock();
 
     if (active) {
+      const moving = Math.abs(this.input.moveX) + Math.abs(this.input.moveY) + Math.abs(this.input.lookX) > 0.01;
       const assist =
         this.input.activeDevice === 'gamepad'
-          ? this.aimAssist.compute(this.camera, Settings.get('aimAssist'), this.rig.ads, Math.abs(this.input.moveX) + Math.abs(this.input.moveY) + Math.abs(this.input.lookX) > 0.01, dt, this.player.collider)
+          ? this.aimAssist.compute(this.camera, Settings.get('aimAssist'), this.rig.ads, moving, dt, this.player.collider)
           : undefined;
       this.rig.handleInput(this.input, dt, aiming, assist);
     }
@@ -230,10 +217,10 @@ export class Game {
 
     for (let i = 0; i < steps; i++) {
       this.player.step();
-      this.range.step();
+      this.world.step();
       this.ballistics.step(FIXED_DT);
       this.physics.step();
-      if (this.player.center.y < -50) this.player.teleport(this.spawn);
+      this.recoverFallThrough();
     }
 
     this.physics.syncMeshes();
@@ -241,20 +228,30 @@ export class Game {
     this.player.interpolate(this.time.alpha);
     this.animator.update(dt, this.player, this.rig.pitch, this.combat.pose);
     this.rig.update(dt, this.player, aiming, this.animator.root);
-    this.range.update(dt);
+    this.world.update(dt, this.camera, this.player.renderCenter);
     this.ballistics.render();
     this.effects.update(dt);
 
-    // Keep shadow frustum centred on player
-    const p = this.player.renderCenter;
-    this.sun.target.position.copy(p);
-    this.sun.position.copy(p).addScaledVector(this.sunDir, 80);
+    if (this.mapView) {
+      if (this.hud.playing && this.input.pressed('map')) this.mapView.toggle();
+      this.mapView.update(this.player.renderCenter, this.rig.yaw);
+    }
+    this.compass.update(this.rig.yaw, this.player.renderCenter);
 
     this.hud.update(dt, Settings.get('showDebug'), this.player, this.rig);
     this.combatHud.update(dt, this.combat, this.rig, this.player);
     this.renderer.render(this.scene, this.camera);
     this.stats.end();
     this.stats.update();
+  }
+
+  /** Rescue the player if they slip under the terrain or out of the world. */
+  private recoverFallThrough(): void {
+    const c = this.player.center;
+    const ground = this.world.heightAt?.(c.x, c.z);
+    if (c.y < -50 || (ground !== undefined && c.y < ground - 4)) {
+      this.player.teleport(new THREE.Vector3(c.x, (ground ?? this.spawn.y) + 1, c.z));
+    }
   }
 
   private onResize(): void {
