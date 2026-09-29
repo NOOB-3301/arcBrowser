@@ -1,0 +1,83 @@
+:root {
+  --ui-fg: #f1ead8;
+  --ui-dim: #b7ae98;
+  --ui-accent: #ff8a2a;
+  --ui-bg: rgba(18, 16, 12, 0.72);
+  --ui-font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d0c0a;
+  color: var(--ui-fg);
+  font-family: var(--ui-font);
+  user-select: none;
+}
+
+#game { display: block; width: 100vw; height: 100vh; }
+
+#ui { position: fixed; inset: 0; pointer-events: none; }
+
+.hud-tag {
+  position: absolute; top: 14px; left: 16px;
+  font-weight: 800; letter-spacing: 0.2em; font-size: 14px;
+}
+.hud-tag span { font-weight: 400; letter-spacing: 0.05em; color: var(--ui-dim); margin-left: 8px; }
+
+.hud-mode {
+  position: absolute; top: 12px; right: 16px;
+  background: var(--ui-bg); padding: 6px 12px; border-radius: 4px; font-size: 13px;
+  border-left: 3px solid var(--ui-accent);
+}
+.hud-mode b { color: var(--ui-accent); margin-right: 6px; }
+.hud-mode em { color: var(--ui-dim); font-style: normal; }
+
+.crosshair {
+  position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
+  margin: -2px 0 0 -2px; border-radius: 50%; background: var(--ui-fg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.hud-prompts {
+  position: absolute; right: 16px; bottom: 16px;
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px; align-items: flex-end;
+}
+.hud-prompts div { background: var(--ui-bg); padding: 3px 8px; border-radius: 3px; }
+kbd {
+  display: inline-block; min-width: 22px; text-align: center; margin-right: 8px;
+  padding: 1px 6px; border-radius: 3px; background: var(--ui-fg); color: #111;
+  font: 700 11px var(--ui-font);
+}
+
+.hud-toast {
+  position: absolute; top: 18%; left: 50%; transform: translateX(-50%);
+  background: var(--ui-bg); padding: 8px 18px; border-radius: 4px; font-size: 15px;
+  opacity: 0; transition: opacity 0.2s;
+}
+.hud-toast.show { opacity: 1; }
+
+.hud-debug {
+  position: absolute; left: 16px; bottom: 16px; margin: 0;
+  background: var(--ui-bg); padding: 8px 10px; border-radius: 4px;
+  font: 12px/1.45 ui-monospace, Menlo, monospace; color: var(--ui-dim);
+}
+
+.overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(20, 16, 10, 0.55), rgba(0, 0, 0, 0.85));
+  pointer-events: auto; cursor: pointer;
+}
+.overlay-card { text-align: center; }
+.overlay-card h1 {
+  margin: 0 0 12px; font-size: 64px; letter-spacing: 0.3em; font-weight: 900;
+  color: var(--ui-fg); text-shadow: 0 4px 30px rgba(255, 138, 42, 0.35);
+}
+.overlay-sub { font-size: 18px; margin: 0 0 8px; }
+.overlay-hint { font-size: 13px; color: var(--ui-dim); margin: 0; }
+
+/* lil-gui / stats sit above the overlay */
+.lil-gui.root { z-index: 20; }
