@@ -26,6 +26,14 @@ export const CREDITS: Credit[] = [
     notes: 'Rifle aim/idle/reload and ladder-climb clips authored for RUSTFALL on the same skeleton.',
   },
   {
+    asset: 'weapons.glb',
+    title: 'RUSTFALL weapon set (13 models)',
+    author: 'RUSTFALL',
+    url: 'https://polyhaven.com/a/green_metal_rust',
+    license: 'Original',
+    notes: 'Modelled in Blender; surface textures green_metal_rust + metal_plate_02 by Rob Tuytel (Poly Haven, CC0).',
+  },
+  {
     asset: 'textures/*',
     title: 'Poly Haven textures',
     author: 'Poly Haven',

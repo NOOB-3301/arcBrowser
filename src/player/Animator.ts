@@ -41,6 +41,7 @@ const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
+const _e = new THREE.Euler();
 
 /**
  * Skinned character rig (RUSTFALL raider, Quaternius UAL skeleton). Two animation layers on one
@@ -267,7 +268,14 @@ export class Animator {
       this.rotateBoneWorld('Head', right, pitch * 0.1);
     }
     // Weapon offsets: swap dips the gun, kick pushes it back along the barrel
-    this.gunMount.rotation.x = -pose.swap * 1.2;
+    if (this.pistol) {
+      // UAL pistol clips hold the hand differently from the rifle socket: point the barrel along the aim
+      // direction (lowered when not aiming) in world space, then express it in the socket frame.
+      const pitch = THREE.MathUtils.lerp(-0.9, THREE.MathUtils.clamp(camPitch, -1.1, 1.1), this.aimBlend) - pose.swap * 1.2 + pose.kick * 0.25;
+      _q2.setFromEuler(_e.set(pitch, this.yaw, 0, 'YXZ'));
+      this.socket.getWorldQuaternion(_q).invert();
+      this.gunMount.quaternion.copy(_q.multiply(_q2));
+    } else this.gunMount.rotation.set(-pose.swap * 1.2, 0, 0);
     this.gunMount.position.z = pose.kick * 0.06;
   }
 

@@ -1,11 +1,52 @@
 import * as THREE from 'three';
 import { RARITY, type Rarity, type WeaponDef } from './WeaponDefs';
+import { Assets } from '../assets/Assets';
+
+const accentCache = new Map<Rarity, THREE.MeshStandardMaterial>();
 
 /**
- * Procedural stand-in weapon meshes (replaced by Blender GLBs in M7).
- * Built along -Z (barrel forward). `userData.muzzle` marks the barrel tip.
+ * Weapon model for `def` at `rarity`. Uses the Blender-authored meshes in weapons.glb (one root node
+ * per weapon id, grip at the origin, barrel along -Z, `<id>_muzzle` child at the barrel tip) with the
+ * rarity colour on the `W_accent` material; falls back to the procedural stand-in if the GLB is missing.
+ * `userData.muzzle` marks the barrel tip, `userData.cls` the weapon class.
  */
 export function buildWeaponModel(def: WeaponDef, rarity: Rarity): THREE.Group {
+  const src = Assets.node('weapons', def.id);
+  if (!src) return proceduralWeapon(def, rarity);
+  const g = new THREE.Group();
+  const model = src.clone(true);
+  model.position.set(0, 0, 0);
+  g.add(model);
+  let accent = accentCache.get(rarity);
+  model.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.castShadow = true;
+    const swap = (mat: THREE.Material) => {
+      if (mat.name !== 'W_accent') return mat;
+      if (!accent) {
+        accent = (mat as THREE.MeshStandardMaterial).clone();
+        accent.color.set(RARITY[rarity].color);
+        accent.emissive.set(RARITY[rarity].color);
+        accent.emissiveIntensity = 0.35;
+        accentCache.set(rarity, accent);
+      }
+      return accent;
+    };
+    m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+  });
+  const muzzle = model.getObjectByName(`${def.id}_muzzle`) ?? new THREE.Object3D();
+  if (!muzzle.parent) {
+    muzzle.position.set(0, 0.08, -0.6);
+    model.add(muzzle);
+  }
+  g.userData.muzzle = muzzle;
+  g.userData.cls = def.cls;
+  return g;
+}
+
+/** Procedural stand-in (used only if weapons.glb failed to load). */
+function proceduralWeapon(def: WeaponDef, rarity: Rarity): THREE.Group {
   const g = new THREE.Group();
   const body = new THREE.MeshStandardMaterial({ color: '#2b2d2f', roughness: 0.55, metalness: 0.5 });
   const furniture = new THREE.MeshStandardMaterial({ color: '#4a4034', roughness: 0.8 });
