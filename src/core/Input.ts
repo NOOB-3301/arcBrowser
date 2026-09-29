@@ -16,15 +16,39 @@ export type Button =
 export type Device = 'kbm' | 'gamepad';
 export type PadStyle = 'xbox' | 'ps' | 'generic';
 
-const BUTTONS: Button[] = [
+/** Keyboard-only movement actions (the left stick drives movement on a pad). */
+export type MoveAction = 'moveForward' | 'moveBack' | 'moveLeft' | 'moveRight';
+export type KbmAction = Button | MoveAction;
+
+/**
+ * Gamepad binding: a W3C standard-mapping button index plus how it triggers.
+ * 'tap' fires on a short release and 'hold' after X_HOLD_TIME, so one button can
+ * carry two actions (X: tap = reload, hold = interact).
+ */
+export interface PadBind {
+  btn: number;
+  mode: 'press' | 'tap' | 'hold';
+}
+
+export const BUTTONS: Button[] = [
   'fire', 'ads', 'sprint', 'crouch', 'jump', 'reload', 'interact',
   'swapWeapon', 'throwable', 'melee', 'dodge', 'heal', 'swapShoulder',
   'freeLook', 'inventory', 'map', 'pause', 'toggleView',
   'fireMode', 'slot1', 'slot2',
 ];
+export const MOVE_ACTIONS: MoveAction[] = ['moveForward', 'moveBack', 'moveLeft', 'moveRight'];
+export const KBM_ACTIONS: KbmAction[] = [...MOVE_ACTIONS, ...BUTTONS];
+/** Keyboard + mouse slots per action (primary, alternate). */
+export const KBM_SLOTS = 2;
+/** Keys that cannot be bound (Esc = pause/cancel, F9 = input mode switch). */
+export const RESERVED_CODES = ['Escape', 'F9'];
 
-// ---- Keyboard + mouse bindings (KeyboardEvent.code / 'Mouse<n>' / 'Wheel') ----
-export const KBM_BINDINGS: Record<Button, string[]> = {
+// ---- Keyboard + mouse bindings (KeyboardEvent.code / 'Mouse<n>' / 'Wheel' / 'Control' = either Ctrl) ----
+const DEFAULT_KBM: Record<KbmAction, string[]> = {
+  moveForward: ['KeyW'],
+  moveBack: ['KeyS'],
+  moveLeft: ['KeyA'],
+  moveRight: ['KeyD'],
   fire: ['Mouse0'],
   ads: ['Mouse2'],
   sprint: ['ShiftLeft'],
@@ -35,7 +59,7 @@ export const KBM_BINDINGS: Record<Button, string[]> = {
   swapWeapon: ['Wheel'],
   throwable: ['KeyG'],
   melee: ['KeyV'],
-  dodge: ['ControlLeft', 'ControlRight', 'KeyZ'],
+  dodge: ['Control', 'KeyZ'],
   heal: ['KeyH'],
   swapShoulder: ['KeyQ', 'Mouse1'],
   freeLook: ['AltLeft'],
@@ -51,30 +75,135 @@ export const KBM_BINDINGS: Record<Button, string[]> = {
 // ---- Gamepad bindings (W3C "standard" mapping button indices) ----
 // 0 A/✕  1 B/○  2 X/□  3 Y/△  4 LB  5 RB  6 LT  7 RT  8 View  9 Menu
 // 10 L3  11 R3  12 D↑  13 D↓  14 D←  15 D→
-const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, VIEW: 8, MENU: 9, L3: 10, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+export const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, VIEW: 8, MENU: 9, L3: 10, R3: 11, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const P = (btn: number, mode: PadBind['mode'] = 'press'): PadBind[] => [{ btn, mode }];
 
-export const PAD_BINDINGS: Record<Button, number[]> = {
-  fire: [PAD.RT],
-  ads: [PAD.LT],
-  sprint: [PAD.L3],
-  crouch: [PAD.B],
-  jump: [PAD.A],
-  reload: [], // X tap (see tap/hold handling)
-  interact: [], // X hold
-  swapWeapon: [PAD.Y],
-  throwable: [PAD.LB],
-  melee: [PAD.R3],
-  dodge: [PAD.RB],
-  heal: [PAD.UP],
-  swapShoulder: [PAD.RIGHT],
-  freeLook: [], // D← hold
-  fireMode: [], // D← tap
+const DEFAULT_PAD: Record<Button, PadBind[]> = {
+  fire: P(PAD.RT),
+  ads: P(PAD.LT),
+  sprint: P(PAD.L3),
+  crouch: P(PAD.B),
+  jump: P(PAD.A),
+  reload: P(PAD.X, 'tap'),
+  interact: P(PAD.X, 'hold'),
+  swapWeapon: P(PAD.Y),
+  throwable: P(PAD.LB),
+  melee: P(PAD.R3),
+  dodge: P(PAD.RB),
+  heal: P(PAD.UP),
+  swapShoulder: P(PAD.RIGHT),
+  freeLook: P(PAD.LEFT, 'hold'),
+  fireMode: P(PAD.LEFT, 'tap'),
   slot1: [],
   slot2: [],
-  inventory: [PAD.DOWN],
-  map: [PAD.VIEW],
-  pause: [PAD.MENU],
+  inventory: P(PAD.DOWN),
+  map: P(PAD.VIEW),
+  pause: P(PAD.MENU),
   toggleView: [],
+};
+
+const BINDINGS_KEY = 'rustfall.bindings.v1';
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+
+/** Live bindings (mutated in place by the rebinding API; always read through these). */
+export const KBM_BINDINGS: Record<KbmAction, string[]> = clone(DEFAULT_KBM);
+export const PAD_BINDINGS: Record<Button, PadBind[]> = clone(DEFAULT_PAD);
+
+function loadBindings(): void {
+  try {
+    const raw = localStorage.getItem(BINDINGS_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw) as { kbm?: Partial<Record<KbmAction, string[]>>; pad?: Partial<Record<Button, PadBind[]>> };
+    for (const a of KBM_ACTIONS) {
+      const v = data.kbm?.[a];
+      if (Array.isArray(v) && v.every((c) => typeof c === 'string')) KBM_BINDINGS[a] = v.slice(0, KBM_SLOTS);
+    }
+    for (const b of BUTTONS) {
+      const v = data.pad?.[b];
+      if (Array.isArray(v) && v.every((x) => typeof x?.btn === 'number' && ['press', 'tap', 'hold'].includes(x.mode))) PAD_BINDINGS[b] = v.slice(0, 1);
+    }
+  } catch {
+    // corrupt or blocked storage: keep defaults
+  }
+}
+loadBindings();
+
+function saveBindings(): void {
+  try {
+    localStorage.setItem(BINDINGS_KEY, JSON.stringify({ kbm: KBM_BINDINGS, pad: PAD_BINDINGS }));
+  } catch {
+    // ignore
+  }
+  Events.emit('input:bindings');
+}
+
+/** Does a stored binding code match a physical key code? ('Control' = either Ctrl key.) */
+function codeMatches(bound: string, code: string): boolean {
+  return bound === code || (bound === 'Control' && (code === 'ControlLeft' || code === 'ControlRight'));
+}
+
+/** Two pad binds collide unless they split one button into tap + hold. */
+function padClash(a: PadBind, b: PadBind): boolean {
+  if (a.btn !== b.btn) return false;
+  return !((a.mode === 'tap' && b.mode === 'hold') || (a.mode === 'hold' && b.mode === 'tap'));
+}
+
+export interface KbmConflict {
+  action: KbmAction;
+  slot: number;
+}
+
+/** Rebinding API (W5). Changes persist to localStorage and emit 'input:bindings'. */
+export const Bindings = {
+  kbm(a: KbmAction): string[] {
+    return KBM_BINDINGS[a];
+  },
+  pad(b: Button): PadBind | null {
+    return PAD_BINDINGS[b][0] ?? null;
+  },
+  /** Other actions already using this key (normalised: ControlLeft/Right collide with 'Control'). */
+  kbmConflicts(code: string, except?: KbmAction): KbmConflict[] {
+    const out: KbmConflict[] = [];
+    for (const a of KBM_ACTIONS) {
+      if (a === except) continue;
+      KBM_BINDINGS[a].forEach((c, slot) => {
+        if (c && (codeMatches(c, code) || codeMatches(code, c))) out.push({ action: a, slot });
+      });
+    }
+    return out;
+  },
+  padConflicts(bind: PadBind, except?: Button): Button[] {
+    return BUTTONS.filter((b) => b !== except && PAD_BINDINGS[b].some((x) => padClash(x, bind)));
+  },
+  /** Set one keyboard slot ('' clears it). */
+  setKbm(a: KbmAction, slot: number, code: string): void {
+    const list = KBM_BINDINGS[a].slice(0, KBM_SLOTS);
+    while (list.length <= slot) list.push('');
+    list[slot] = code;
+    // keep the primary slot filled when possible
+    while (list.length && !list[list.length - 1]) list.pop();
+    if (!list[0] && list[1]) list.splice(0, 1);
+    KBM_BINDINGS[a] = list;
+    saveBindings();
+  },
+  setPad(b: Button, bind: PadBind | null): void {
+    PAD_BINDINGS[b] = bind ? [{ ...bind }] : [];
+    saveBindings();
+  },
+  isDefault(a: KbmAction): boolean {
+    const padSame = (BUTTONS as string[]).includes(a) ? JSON.stringify(PAD_BINDINGS[a as Button]) === JSON.stringify(DEFAULT_PAD[a as Button]) : true;
+    return JSON.stringify(KBM_BINDINGS[a]) === JSON.stringify(DEFAULT_KBM[a]) && padSame;
+  },
+  resetAction(a: KbmAction): void {
+    KBM_BINDINGS[a] = clone(DEFAULT_KBM[a]);
+    if ((BUTTONS as string[]).includes(a)) PAD_BINDINGS[a as Button] = clone(DEFAULT_PAD[a as Button]);
+    saveBindings();
+  },
+  resetAll(): void {
+    for (const a of KBM_ACTIONS) KBM_BINDINGS[a] = clone(DEFAULT_KBM[a]);
+    for (const b of BUTTONS) PAD_BINDINGS[b] = clone(DEFAULT_PAD[b]);
+    saveBindings();
+  },
 };
 
 const X_HOLD_TIME = 0.3;
@@ -89,6 +218,10 @@ interface ButtonState {
 }
 
 export class Input {
+  /** W5: the live instance (settings UI / glyphs read it). */
+  static instance: Input | null = null;
+  /** W5: while true the settings screen is capturing a binding; gameplay ignores keys. */
+  capturing = false;
   /** Device currently driving gameplay. */
   activeDevice: Device = 'kbm';
   padStyle: PadStyle = 'generic';
@@ -113,11 +246,12 @@ export class Input {
   private mouseDY = 0;
   private padIndex: number | null = null;
   private padPrev: boolean[] = [];
-  private xHeld = 0;
-  private xHoldFired = false;
-  private leftHeld = 0;
+  /** Seconds each pad button has been held (for tap / hold bindings). */
+  private padHeld: number[] = [];
+  private padHoldFired: boolean[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
+    Input.instance = this;
     for (const b of BUTTONS) this.state.set(b, { down: false, pressed: false, released: false });
     this.bindDom();
     this.resolveDevice();
@@ -184,8 +318,9 @@ export class Input {
     if (useKbm) {
       for (const b of BUTTONS) {
         for (const code of KBM_BINDINGS[b]) {
-          if (this.keys.has(code)) nowDown.set(b, true);
-          if (this.kbmPressedQueue.has(code)) edgePressed.add(b);
+          if (!code) continue;
+          if (this.keyDown(code)) nowDown.set(b, true);
+          if (this.kbmPressedQueue.has(code) || (code === 'Control' && (this.kbmPressedQueue.has('ControlLeft') || this.kbmPressedQueue.has('ControlRight')))) edgePressed.add(b);
         }
       }
     }
@@ -194,32 +329,33 @@ export class Input {
       const pressedNow = pad!.buttons.map((btn, i) =>
         i === PAD.LT || i === PAD.RT ? btn.value > TRIGGER_THRESHOLD : btn.pressed,
       );
+      // Plain presses; buttons that carry tap / hold bindings are resolved below
+      const muxed = new Set<number>();
       for (const b of BUTTONS) {
-        for (const idx of PAD_BINDINGS[b]) if (pressedNow[idx]) nowDown.set(b, true);
-      }
-      // X: tap = reload, hold = interact
-      const x = pressedNow[PAD.X];
-      if (x) {
-        this.xHeld += dt;
-        if (this.xHeld >= X_HOLD_TIME) {
-          nowDown.set('interact', true);
-          if (!this.xHoldFired) {
-            edgePressed.add('interact');
-            this.xHoldFired = true;
-          }
+        for (const pb of PAD_BINDINGS[b]) {
+          if (pb.mode === 'press') {
+            if (pressedNow[pb.btn]) nowDown.set(b, true);
+          } else muxed.add(pb.btn);
         }
-      } else {
-        if (this.padPrev[PAD.X] && !this.xHoldFired) edgePressed.add('reload');
-        this.xHeld = 0;
-        this.xHoldFired = false;
       }
-      // D←: tap = fire mode, hold = free look
-      if (pressedNow[PAD.LEFT]) {
-        this.leftHeld += dt;
-        if (this.leftHeld >= X_HOLD_TIME) nowDown.set('freeLook', true);
-      } else {
-        if (this.padPrev[PAD.LEFT] && this.leftHeld < X_HOLD_TIME) edgePressed.add('fireMode');
-        this.leftHeld = 0;
+      // Tap / hold: e.g. X tap = reload, X hold = interact; D← tap = fire mode, hold = free look
+      for (const idx of muxed) {
+        const holds = BUTTONS.filter((b) => PAD_BINDINGS[b].some((pb) => pb.btn === idx && pb.mode === 'hold'));
+        const taps = BUTTONS.filter((b) => PAD_BINDINGS[b].some((pb) => pb.btn === idx && pb.mode === 'tap'));
+        if (pressedNow[idx]) {
+          this.padHeld[idx] = (this.padHeld[idx] ?? 0) + dt;
+          if (holds.length && this.padHeld[idx] >= X_HOLD_TIME) {
+            for (const b of holds) nowDown.set(b, true);
+            if (!this.padHoldFired[idx]) {
+              for (const b of holds) edgePressed.add(b);
+              this.padHoldFired[idx] = true;
+            }
+          }
+        } else {
+          if (this.padPrev[idx] && !this.padHoldFired[idx]) for (const b of taps) edgePressed.add(b);
+          this.padHeld[idx] = 0;
+          this.padHoldFired[idx] = false;
+        }
       }
       this.padPrev = pressedNow;
     }
@@ -239,8 +375,9 @@ export class Input {
     const invert = Settings.get('invertY') ? -1 : 1;
 
     if (useKbm) {
-      this.moveX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
-      this.moveY = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
+      const k = (a: KbmAction) => (KBM_BINDINGS[a].some((c) => c && this.keyDown(c)) ? 1 : 0);
+      this.moveX = k('moveRight') - k('moveLeft');
+      this.moveY = k('moveForward') - k('moveBack');
       const len = Math.hypot(this.moveX, this.moveY);
       if (len > 1) {
         this.moveX /= len;
@@ -258,8 +395,10 @@ export class Input {
       const [lx, ly] = this.stick(pad!.axes[2], pad!.axes[3]);
       this.lookX = lx * PAD_LOOK_RAD_PER_SEC * Settings.get('gamepadSensitivityX') * dt;
       this.lookY = ly * PAD_LOOK_RAD_PER_SEC * Settings.get('gamepadSensitivityY') * dt * invert;
-      this.fireAxis = pad!.buttons[PAD.RT]?.value ?? 0;
-      this.adsAxis = pad!.buttons[PAD.LT]?.value ?? 0;
+      // Analog value of whatever is bound (triggers give 0..1, digital buttons 0/1)
+      const axis = (b: Button) => PAD_BINDINGS[b].reduce((m, pb) => (pb.mode === 'press' ? Math.max(m, pad!.buttons[pb.btn]?.value ?? 0) : m), 0);
+      this.fireAxis = axis('fire');
+      this.adsAxis = axis('ads');
     }
 
     this.mouseDX = this.mouseDY = 0;
@@ -267,6 +406,11 @@ export class Input {
   }
 
   // ------------------------------------------------------------------ internals
+
+  private keyDown(code: string): boolean {
+    if (code === 'Control') return this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+    return this.keys.has(code);
+  }
 
   private setActiveDevice(d: Device): void {
     if (this.activeDevice === d) return;
@@ -329,7 +473,7 @@ export class Input {
       if (['Tab', 'F5', 'AltLeft', 'Space'].includes(code)) e.preventDefault();
       // While playing, Ctrl is a game key: stop browser shortcuts from swallowing it
       if (this.pointerLocked && (e.ctrlKey || code.startsWith('Control'))) e.preventDefault();
-      if (!this.kbmAllowed() || e.repeat) return;
+      if (!this.kbmAllowed() || e.repeat || this.capturing) return;
       this.keys.add(code);
       this.kbmPressedQueue.add(code);
     });
@@ -345,7 +489,7 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
 
     this.canvas.addEventListener('mousedown', (e) => {
-      if (!this.kbmAllowed() || !this.pointerLocked) return;
+      if (!this.kbmAllowed() || !this.pointerLocked || this.capturing) return;
       const code = `Mouse${e.button}`;
       this.keys.add(code);
       this.kbmPressedQueue.add(code);
@@ -361,7 +505,7 @@ export class Input {
     window.addEventListener(
       'wheel',
       (e) => {
-        if (!this.pointerLocked || !this.kbmAllowed()) return;
+        if (!this.pointerLocked || !this.kbmAllowed() || this.capturing) return;
         if (Math.abs(e.deltaY) > 0) this.kbmPressedQueue.add('Wheel');
       },
       { passive: true },
