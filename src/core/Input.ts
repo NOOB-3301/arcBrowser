@@ -35,7 +35,7 @@ export const KBM_BINDINGS: Record<Button, string[]> = {
   swapWeapon: ['Wheel'],
   throwable: ['KeyG'],
   melee: ['KeyV'],
-  dodge: ['ControlLeft'],
+  dodge: ['ControlLeft', 'ControlRight', 'KeyZ'],
   heal: ['KeyH'],
   swapShoulder: ['KeyQ', 'Mouse1'],
   freeLook: ['AltLeft'],
@@ -94,6 +94,8 @@ export class Input {
   padStyle: PadStyle = 'generic';
   padConnected = false;
   pointerLocked = false;
+  /** Last keyboard code seen (debug readout for binding issues). */
+  lastKeyCode = '';
 
   moveX = 0;
   moveY = 0;
@@ -317,17 +319,29 @@ export class Input {
 
   private bindDom(): void {
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'F9') {
+      const code = normalizeCode(e);
+      this.lastKeyCode = `${code}${code !== e.code ? ` (raw "${e.code}")` : ''}`;
+      if (code === 'F9') {
         e.preventDefault();
         this.cycleMode();
         return;
       }
-      if (['Tab', 'F5', 'AltLeft', 'Space'].includes(e.code)) e.preventDefault();
+      if (['Tab', 'F5', 'AltLeft', 'Space'].includes(code)) e.preventDefault();
+      // While playing, Ctrl is a game key: stop browser shortcuts from swallowing it
+      if (this.pointerLocked && (e.ctrlKey || code.startsWith('Control'))) e.preventDefault();
       if (!this.kbmAllowed() || e.repeat) return;
-      this.keys.add(e.code);
-      this.kbmPressedQueue.add(e.code);
+      this.keys.add(code);
+      this.kbmPressedQueue.add(code);
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('keyup', (e) => {
+      const code = normalizeCode(e);
+      this.keys.delete(code);
+      // Some keyboards/OS layers drop the Ctrl keyup when combined with other keys
+      if (!e.ctrlKey) {
+        this.keys.delete('ControlLeft');
+        this.keys.delete('ControlRight');
+      }
+    });
     window.addEventListener('blur', () => this.keys.clear());
 
     this.canvas.addEventListener('mousedown', (e) => {
@@ -372,6 +386,15 @@ export class Input {
       if (this.mode === 'auto') this.setActiveDevice('kbm');
     });
   }
+}
+
+/**
+ * Physical key code, falling back to `key` when `code` is missing or remapped
+ * (seen with some Mac/remote-desktop keyboards for the Control key).
+ */
+function normalizeCode(e: KeyboardEvent): string {
+  if (e.key === 'Control' && !e.code.startsWith('Control')) return e.location === 2 ? 'ControlRight' : 'ControlLeft';
+  return e.code || e.key;
 }
 
 export function detectPadStyle(id: string): PadStyle {
