@@ -117,5 +117,6 @@ export function buildWeaponModel(def: WeaponDef, rarity: Rarity): THREE.Group {
   muzzle.position.set(0, 0.02, barrelEnd);
   g.add(muzzle);
   g.userData.muzzle = muzzle;
+  g.userData.cls = def.cls;
   return g;
 }

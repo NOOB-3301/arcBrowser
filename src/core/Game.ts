@@ -8,6 +8,7 @@ import { Events } from './Events';
 import { Physics } from '../physics/Physics';
 import { PlayerController } from '../player/PlayerController';
 import { Animator } from '../player/Animator';
+import { Assets } from '../assets/Assets'; // W2: GLB preload
 import { CameraRig } from '../camera/CameraRig';
 import { Tuning } from '../player/MovementStates';
 import { DamageRegistry } from '../combat/Damage';
@@ -78,7 +79,9 @@ export class Game {
   }
 
   async init(mapId: string, progress: (msg: string) => void = () => {}): Promise<void> {
-    await this.physics.init();
+    // W2: preload GLB models (characters, ARC units, weapons, vegetation) alongside physics
+    progress('Loading models…');
+    await Promise.all([this.physics.init(), Assets.load()]);
     if (mapId === 'arena') {
       this.world = new ArenaWorld(this.scene, this.physics, this.registry, this.renderer);
     } else {

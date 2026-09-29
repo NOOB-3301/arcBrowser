@@ -550,17 +550,13 @@ export class RaiderBot extends Bot {
   render(dt: number, alpha = 1): void {
     this.controller.interpolate(alpha);
     const w = this.weapon;
+    this.animator.dead = !this.health.alive; // W2
     this.animator.update(dt, this.controller, this.aimPitch, {
       reload: w.reloading ? w.reloadProgress : this.healT >= 0 ? this.healT / 2.4 : -1,
       swap: 0,
       kick: this.kick,
     });
     this.updateFlash(dt);
-    if (!this.health.alive) {
-      // Topple over
-      this.animator.root.rotation.x = Math.max(this.animator.root.rotation.x - dt * 3, -Math.PI / 2);
-      this.animator.root.position.y -= Math.min(0.3, this.deadT * 0.5);
-    }
   }
 
   dispose(): void {

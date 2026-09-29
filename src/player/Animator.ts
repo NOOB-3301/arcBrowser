@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { PlayerController } from './PlayerController';
+import { Assets, cloneMaterials } from '../assets/Assets';
 
 /** Weapon-driven pose inputs. reload: -1 idle or 0..1 progress; swap/kick 0..1. */
 export interface CombatPose {
@@ -9,105 +10,118 @@ export interface CombatPose {
 }
 const NO_POSE: CombatPose = { reload: -1, swap: 0, kick: 0 };
 
+export interface Palette {
+  suit: string;
+  dark: string;
+  accent: string;
+}
+
+/** Bones driven by the weapon (upper-body) layer. Everything else belongs to the locomotion layer. */
+const UPPER = /^(spine_02|spine_03|neck_01|Head|clavicle_|upperarm_|lowerarm_|hand_|index_|middle_|ring_|pinky_|thumb_)/;
+
+/** Natural ground speed (m/s) of each locomotion clip, used to scale playback so feet don't slide. */
+const CLIP_SPEED: Record<string, number> = {
+  Walk_Loop: 1.5,
+  Jog_Fwd_Loop: 3.9,
+  Sprint_Loop: 6.4,
+  Crouch_Fwd_Loop: 1.6,
+};
+
+type Layer = 'full' | 'lower' | 'upper';
+
+interface Slot {
+  clip: THREE.AnimationClip;
+  actions: Partial<Record<Layer, THREE.AnimationAction>>;
+  time: number;
+  weight: number;
+  target: number;
+}
+
+const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _v = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+
 /**
- * Blocky raider mannequin with procedural animation. Stand-in until the rigged
- * GLB character lands in M7; the controller-facing API (update) stays the same.
+ * Skinned character rig (RUSTFALL raider, Quaternius UAL skeleton). Two animation layers on one
+ * AnimationMixer: a locomotion layer (lower body, or full body for roll/mantle/ladder/death) and a
+ * weapon layer (upper body rifle/pistol poses), blended with per-slot weights and manually driven
+ * clip time so gait speed matches the controller. Camera pitch bends the spine; the weapon rides a
+ * socket on the right hand. Public API matches the old procedural mannequin.
  */
 export class Animator {
   readonly root = new THREE.Group();
-  private hips = new THREE.Group();
-  private torso = new THREE.Group();
-  private head = new THREE.Group();
-  private armL = new THREE.Group();
-  private armR = new THREE.Group();
-  private foreL = new THREE.Group();
-  private foreR = new THREE.Group();
-  private thighL = new THREE.Group();
-  private thighR = new THREE.Group();
-  private shinL = new THREE.Group();
-  private shinR = new THREE.Group();
-  private tumble = new THREE.Group();
-
-  private phase = 0;
-  private lean = 0;
-  private crouch = 0;
-  private aimBlend = 0;
-  private yaw = 0;
-  private gunMount = new THREE.Group();
-  private weapon: THREE.Object3D | null = null;
-  private _m = new THREE.Vector3();
-
   /** Materials that flash when hit (bots). */
   readonly materials: THREE.MeshStandardMaterial[];
+  /** Set by the owner when the character dies (plays the death clip once). */
+  dead = false;
 
-  constructor(scene: THREE.Scene, palette: { suit: string; dark: string; accent: string } = { suit: '#c9a36a', dark: '#3b3a36', accent: '#e0662a' }) {
-    const suit = new THREE.MeshStandardMaterial({ color: palette.suit, roughness: 0.85 });
-    const dark = new THREE.MeshStandardMaterial({ color: palette.dark, roughness: 0.9 });
-    const accent = new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.6 });
-    this.materials = [suit, dark, accent];
-    const visor = new THREE.MeshStandardMaterial({ color: '#1a2226', roughness: 0.2, metalness: 0.6 });
+  private model: THREE.Object3D;
+  private mixer: THREE.AnimationMixer;
+  private slots = new Map<string, Slot>();
+  private socket: THREE.Object3D;
+  private gunMount = new THREE.Group();
+  private weapon: THREE.Object3D | null = null;
+  private pistol = false;
+  private bones: Record<string, THREE.Bone> = {};
+  private yaw = 0;
+  private hipYaw = 0;
+  private upperK = 1;
+  private prevState = '';
+  private landT = 0;
+  private deathT = 0;
+  private aimBlend = 0;
+  private _m = new THREE.Vector3();
 
-    const box = (w: number, h: number, d: number, m: THREE.Material, y = 0, z = 0, x = 0) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      return mesh;
-    };
-
-    // Hierarchy: root(feet) → tumble (roll pivot at hip height) → hips → torso/legs
-    this.root.add(this.tumble);
-    this.tumble.position.y = 0.55;
-    this.tumble.add(this.hips);
-    this.hips.position.y = 0.95 - 0.55;
-
-    this.hips.add(box(0.36, 0.18, 0.22, dark));
-    this.hips.add(this.torso);
-    this.torso.add(box(0.44, 0.56, 0.26, suit, 0.33));
-    this.torso.add(box(0.46, 0.14, 0.28, accent, 0.5)); // chest band
-    this.torso.add(box(0.36, 0.46, 0.2, dark, 0.34, 0.22)); // backpack
-    this.torso.add(box(0.1, 0.2, 0.08, accent, 0.55, 0.3, 0.12)); // pack light
-
-    this.torso.add(this.head);
-    this.head.position.y = 0.68;
-    this.head.add(box(0.24, 0.26, 0.26, suit, 0.1));
-    this.head.add(box(0.2, 0.1, 0.04, visor, 0.12, -0.13));
-
-    for (const [arm, fore, x] of [[this.armL, this.foreL, -0.28], [this.armR, this.foreR, 0.28]] as const) {
-      this.torso.add(arm);
-      arm.position.set(x, 0.56, 0);
-      arm.add(box(0.12, 0.32, 0.12, suit, -0.16));
-      arm.add(fore);
-      fore.position.y = -0.32;
-      fore.add(box(0.11, 0.3, 0.11, dark, -0.15));
+  constructor(scene: THREE.Scene, palette?: Palette) {
+    const gltf = Assets.gltf('raider');
+    if (!gltf) throw new Error('Animator: raider.glb not loaded (call Assets.load() first)');
+    this.model = Assets.clone('raider');
+    // Asset faces +Z (Blender -Y); the game's forward is -Z.
+    this.model.rotation.y = Math.PI;
+    this.root.add(this.model);
+    this.model.traverse((o) => {
+      if ((o as THREE.Bone).isBone) this.bones[o.name] = o as THREE.Bone;
+      const m = o as THREE.SkinnedMesh;
+      if (m.isMesh) {
+        m.castShadow = true;
+        m.frustumCulled = false; // animated bounds exceed the bind-pose sphere
+      }
+    });
+    this.materials = cloneMaterials(this.model);
+    for (const m of this.materials) {
+      m.emissive.setRGB(0, 0, 0);
+      if (palette) tint(m, palette);
     }
-    // Weapon mount in right hand: models are built along -Z, mount aligns that with the forearm
-    this.gunMount.position.set(0, -0.3, 0);
-    this.gunMount.rotation.x = -Math.PI / 2;
-    this.foreR.add(this.gunMount);
+    this.socket = this.model.getObjectByName('socket_r') ?? this.bones.hand_r;
+    this.socket.add(this.gunMount);
 
-    for (const [thigh, shin, x] of [[this.thighL, this.shinL, -0.11], [this.thighR, this.shinR, 0.11]] as const) {
-      this.hips.add(thigh);
-      thigh.position.set(x, -0.06, 0);
-      thigh.add(box(0.15, 0.44, 0.16, dark, -0.22));
-      thigh.add(shin);
-      shin.position.y = -0.44;
-      shin.add(box(0.13, 0.44, 0.14, dark, -0.22));
-      shin.add(box(0.15, 0.08, 0.24, suit, -0.42, -0.04)); // boot
+    this.mixer = new THREE.AnimationMixer(this.model);
+    for (const clip of gltf.animations) {
+      const lower = new THREE.AnimationClip(clip.name + '#lower', clip.duration, clip.tracks.filter((t) => !UPPER.test(t.name)));
+      const upper = new THREE.AnimationClip(clip.name + '#upper', clip.duration, clip.tracks.filter((t) => UPPER.test(t.name)));
+      const mk = (c: THREE.AnimationClip) => {
+        const a = this.mixer.clipAction(c);
+        a.setEffectiveTimeScale(0);
+        a.setEffectiveWeight(0);
+        return a;
+      };
+      this.slots.set(clip.name, { clip, actions: { full: mk(clip), lower: mk(lower), upper: mk(upper) }, time: 0, weight: 0, target: 0 });
     }
-
     scene.add(this.root);
   }
 
   setWeapon(model: THREE.Object3D | null): void {
     if (this.weapon) this.gunMount.remove(this.weapon);
     this.weapon = model;
+    this.pistol = !!model && (model.userData.cls === 'pistol' || model.userData.cls === 'revolver');
     if (model) this.gunMount.add(model);
   }
 
   /** World-space muzzle position of the held weapon (falls back to chest). */
   muzzleWorld(out = new THREE.Vector3()): THREE.Vector3 {
     const m = this.weapon?.userData.muzzle as THREE.Object3D | undefined;
-    if (m) {
+    if (m && this.weapon?.visible) {
       this.root.updateMatrixWorld(true);
       return m.getWorldPosition(out);
     }
@@ -116,127 +130,198 @@ export class Animator {
 
   update(dt: number, p: PlayerController, camPitch: number, pose: CombatPose = NO_POSE): void {
     const damp = (r: number) => 1 - Math.exp(-r * dt);
-    const feet = p.renderFeet();
-    this.root.position.copy(feet);
-
-    // Smooth yaw
+    this.root.position.copy(p.renderFeet());
     let dy = p.facingYaw - this.yaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    this.yaw += dy * damp(20);
+    this.yaw += dy * damp(this.dead ? 0 : 18);
     this.root.rotation.y = this.yaw;
 
-    const speed = p.horizontalSpeed;
     const state = p.state;
-    const crouchTarget = p.crouched && state !== 'roll' && state !== 'mantle' ? 1 : 0;
-    this.crouch += (crouchTarget - this.crouch) * damp(12);
-    const canAim = state === 'ground' || state === 'air' || state === 'slide';
-    this.aimBlend += ((p.aiming && canAim && pose.reload < 0 ? 1 : 0) - this.aimBlend) * damp(16);
-    // Sign convention: +X rotation swings a limb forward (toward -Z); torso lean forward is -X.
-    const leanTarget = state === 'slide' ? 0.45 : p.locomotion === 'sprint' ? -0.32 : p.locomotion === 'jog' ? -0.12 : 0;
-    this.lean += (leanTarget - this.lean) * damp(8);
+    if (this.prevState === 'air' && state === 'ground' && p.horizontalSpeed < 2.5) this.landT = 0.3;
+    this.prevState = state;
+    this.landT = Math.max(0, this.landT - dt);
 
-    // Gait phase advances with distance travelled
-    const stride = p.locomotion === 'sprint' ? 2.3 : p.locomotion === 'crouch' ? 1.2 : 1.7;
-    this.phase += (speed / stride) * Math.PI * dt;
-    const s = Math.sin(this.phase);
-    const c = Math.cos(this.phase);
-    const amp = Math.min(speed / 7, 1) * (p.locomotion === 'sprint' ? 1.0 : 0.7);
+    // ---- choose base (locomotion) clip + playback rate --------------------------------------
+    let base = 'Idle_Loop';
+    let rate = 1;
+    let fullBody = false;
+    let scrub = -1; // 0..1 → drive clip time directly
+    const speed = p.horizontalSpeed;
+    // Movement direction relative to facing, for hip twist / backpedal
+    const vx = p.velocity.x, vz = p.velocity.z;
+    const fwdX = -Math.sin(this.yaw), fwdZ = -Math.cos(this.yaw);
+    const rel = speed > 0.4 ? Math.atan2(fwdX * vz - fwdZ * vx, fwdX * vx + fwdZ * vz) : 0; // + = to the right
+    const back = Math.abs(rel) > 1.9;
+    let hipTarget = 0;
 
-    // Reset
-    this.tumble.rotation.set(0, 0, 0);
-    this.hips.position.y = 0.4;
-    this.torso.rotation.set(this.lean, 0, 0);
-    this.head.rotation.set(0, 0, 0);
-
-    // Legs (walk cycle + crouch pose)
-    const crouchThigh = 1.1 * this.crouch;
-    const crouchShin = -1.7 * this.crouch;
-    this.hips.position.y -= 0.38 * this.crouch;
-    this.thighL.rotation.x = crouchThigh + s * amp;
-    this.thighR.rotation.x = crouchThigh - s * amp;
-    this.shinL.rotation.x = crouchShin - Math.max(0, -c) * amp * 1.2;
-    this.shinR.rotation.x = crouchShin - Math.max(0, c) * amp * 1.2;
-    this.hips.position.y += Math.abs(c) * 0.04 * amp;
-
-    // Arms: carry rifle low, or shoulder it when aiming
-    const swing = s * amp * 0.9;
-    const aimPitch = THREE.MathUtils.clamp(camPitch, -1.1, 1.1);
-    const torsoX = this.lean + aimPitch * 0.3 * this.aimBlend;
-    this.torso.rotation.x = torsoX;
-    const aimArm = Math.PI / 2 + aimPitch - torsoX;
-    this.armR.rotation.set(THREE.MathUtils.lerp(0.25 + swing * 0.2, aimArm, this.aimBlend), 0, THREE.MathUtils.lerp(0, 0.1, this.aimBlend));
-    this.armL.rotation.set(THREE.MathUtils.lerp(-swing + 0.1, aimArm - 0.1, this.aimBlend), 0, THREE.MathUtils.lerp(-0.05, 0.55, this.aimBlend));
-    this.foreR.rotation.set(THREE.MathUtils.lerp(1.0, 0, this.aimBlend), 0, 0);
-    this.foreL.rotation.set(THREE.MathUtils.lerp(0.5, 0.35, this.aimBlend), 0, 0);
-
-    switch (state) {
-      case 'air': {
-        const tuck = p.velocity.y > 0 ? 0.5 : 0.2;
-        this.thighL.rotation.x = tuck + 0.3;
-        this.thighR.rotation.x = tuck - 0.2;
-        this.shinL.rotation.x = -tuck * 1.6;
-        this.shinR.rotation.x = -tuck;
-        this.armL.rotation.x = 0.6;
-        break;
+    if (this.dead) {
+      base = 'Death01';
+      fullBody = true;
+      this.deathT += dt;
+      scrub = Math.min(1, this.deathT / this.clipDur('Death01'));
+    } else {
+      switch (state) {
+        case 'ground': {
+          const loco = p.locomotion;
+          if (this.landT > 0 && speed < 2.5) {
+            base = 'Jump_Land';
+            scrub = 1 - this.landT / 0.3;
+          } else if (loco === 'crouch' || p.crouched) {
+            base = speed > 0.3 ? 'Crouch_Fwd_Loop' : 'Crouch_Idle_Loop';
+          } else if (loco === 'idle' || speed < 0.3) base = 'Idle_Loop';
+          else if (loco === 'sprint') base = 'Sprint_Loop';
+          else if (loco === 'walk' || speed < 2.6) base = 'Walk_Loop';
+          else base = 'Jog_Fwd_Loop';
+          const cs = CLIP_SPEED[base];
+          if (cs) {
+            rate = THREE.MathUtils.clamp(speed / cs, 0.55, 1.8) * (back ? -1 : 1);
+            hipTarget = back ? Math.atan2(Math.sin(rel - Math.PI), Math.cos(rel - Math.PI)) : rel;
+            hipTarget = THREE.MathUtils.clamp(hipTarget, -1.1, 1.1);
+          }
+          break;
+        }
+        case 'air':
+          base = p.velocity.y > 2 ? 'Jump_Start' : 'Jump_Loop';
+          if (base === 'Jump_Start') scrub = 0.55;
+          break;
+        case 'slide':
+          base = 'Slide_Loop';
+          break;
+        case 'roll':
+          base = 'Roll';
+          fullBody = true;
+          scrub = p.actionT;
+          break;
+        case 'mantle':
+          base = 'ClimbUp_1m';
+          fullBody = true;
+          scrub = 0.1 + p.actionT * 0.85;
+          break;
+        case 'ladder':
+          base = 'Ladder_Climb_Loop';
+          fullBody = true;
+          scrub = (((p.center.y / 1.1) % 1) + 1) % 1;
+          break;
+        case 'zipline':
+          base = 'Ladder_Climb_Loop';
+          fullBody = true;
+          scrub = 0.25;
+          break;
       }
-      case 'slide':
-        this.hips.position.y = 0.05;
-        this.thighL.rotation.x = 1.3;
-        this.shinL.rotation.x = -0.2;
-        this.thighR.rotation.x = 0.4;
-        this.shinR.rotation.x = -1.6;
-        this.armL.rotation.set(0.3, 0, -0.9);
-        break;
-      case 'roll':
-        this.tumble.rotation.x = -p.actionT * Math.PI * 2;
-        this.hips.position.y = 0.15;
-        this.thighL.rotation.x = this.thighR.rotation.x = 2.0;
-        this.shinL.rotation.x = this.shinR.rotation.x = -2.3;
-        this.torso.rotation.x = -0.9;
-        this.armL.rotation.x = this.armR.rotation.x = 1.2;
-        break;
-      case 'mantle': {
-        const k = p.actionT;
-        const reach = Math.sin(Math.min(k * 1.4, 1) * Math.PI);
-        this.armL.rotation.x = this.armR.rotation.x = 2.6 - k * 2.2;
-        this.foreL.rotation.x = this.foreR.rotation.x = 0.2;
-        this.thighL.rotation.x = 1.4 * reach;
-        this.shinL.rotation.x = -1.6 * reach;
-        this.thighR.rotation.x = 0.6 * reach;
-        this.shinR.rotation.x = -1.0 * reach;
-        this.torso.rotation.x = -0.5 * reach;
-        break;
-      }
-      case 'ladder': {
-        const cy = p.center.y * 3.2;
-        this.armL.rotation.set(2.5 + Math.sin(cy) * 0.35, 0, 0);
-        this.armR.rotation.set(2.5 - Math.sin(cy) * 0.35, 0, 0);
-        this.foreL.rotation.x = this.foreR.rotation.x = 0.4;
-        this.thighL.rotation.x = 0.7 + Math.sin(cy) * 0.5;
-        this.thighR.rotation.x = 0.7 - Math.sin(cy) * 0.5;
-        this.shinL.rotation.x = this.shinR.rotation.x = -1.1;
-        break;
-      }
-      case 'zipline':
-        this.armL.rotation.set(3.0, 0, -0.1);
-        this.armR.rotation.set(3.0, 0, 0.1);
-        this.foreL.rotation.x = this.foreR.rotation.x = 0;
-        this.thighL.rotation.x = 0.5 + Math.sin(this.phase * 0.3) * 0.1;
-        this.thighR.rotation.x = 0.2;
-        this.shinL.rotation.x = -0.8;
-        this.shinR.rotation.x = -0.4;
-        break;
     }
 
-    // Combat overlays: reload, swap, recoil kick
-    if (pose.reload >= 0 && canAim) {
-      const wob = Math.sin(pose.reload * Math.PI * 4) * 0.15;
-      this.armR.rotation.x = 0.6;
-      this.foreR.rotation.x = 0.9;
-      this.armL.rotation.set(0.9 + wob, 0, 0.5);
-      this.foreL.rotation.x = 1.3;
+    // ---- weapon layer ----------------------------------------------------------------------
+    const hasGun = !!this.weapon;
+    const canAim = !fullBody && hasGun;
+    this.upperK += ((canAim ? 1 : 0) - this.upperK) * damp(14);
+    const aiming = p.aiming && canAim && pose.reload < 0;
+    this.aimBlend += ((aiming ? 1 : 0) - this.aimBlend) * damp(16);
+    let upperClip: string;
+    let upperScrub = -1;
+    if (pose.reload >= 0) {
+      upperClip = this.pistol ? 'Pistol_Reload' : 'Rifle_Reload';
+      upperScrub = pose.reload;
+    } else if (this.pistol) upperClip = aiming ? 'Pistol_Aim_Neutral' : 'Pistol_Idle_Loop';
+    else upperClip = aiming ? 'Rifle_Aim' : 'Rifle_Idle';
+    if (this.weapon) this.weapon.visible = !(state === 'ladder' || state === 'zipline' || state === 'mantle') || this.dead;
+
+    // ---- drive slots -----------------------------------------------------------------------
+    for (const [name, s] of this.slots) {
+      s.target = name === base ? 1 : 0;
+      const isUpper = name === upperClip;
+      const speedUp = name === base && (scrub >= 0 || name === 'Death01') ? 40 : 10;
+      s.weight += (s.target - s.weight) * damp(speedUp);
+      if (s.weight < 0.002 && !isUpper) s.weight = 0;
+      // time
+      if (name === base) {
+        if (scrub >= 0) s.time = scrub * s.clip.duration;
+        else s.time = wrap(s.time + dt * rate, s.clip.duration);
+      }
+      const k = this.upperK;
+      this.setW(s, 'full', s.weight * (1 - k));
+      this.setW(s, 'lower', s.weight * k);
     }
-    this.gunMount.rotation.x = -Math.PI / 2 + pose.swap * 1.3;
-    if (this.weapon) this.weapon.position.z = pose.kick * 0.09;
+    // Upper layer: its own weights (reuse slot weights via a second map would be overkill; crossfade via uw)
+    this.driveUpper(upperClip, upperScrub, dt, damp);
+    for (const s of this.slots.values()) for (const a of Object.values(s.actions)) if (a && a.enabled) a.time = s.time;
+    for (const s of this.slots.values()) {
+      const a = s.actions.upper!;
+      if (a.enabled) a.time = s.upperTime ?? s.time;
+    }
+    this.mixer.update(0);
+
+    // ---- procedural layer: hip twist, aim pitch, recoil --------------------------------------
+    this.hipYaw += (hipTarget - this.hipYaw) * damp(8);
+    this.model.updateMatrixWorld(true);
+    if (Math.abs(this.hipYaw) > 0.01) {
+      this.rotateBoneWorld('pelvis', _up, -this.hipYaw);
+      this.rotateBoneWorld('spine_01', _up, this.hipYaw * 0.6);
+      this.rotateBoneWorld('spine_02', _up, this.hipYaw * 0.4);
+    }
+    if (canAim && !this.dead) {
+      const right = _v.set(1, 0, 0).applyQuaternion(this.root.getWorldQuaternion(_q2));
+      const pitch = THREE.MathUtils.clamp(camPitch, -1.1, 1.1) * this.upperK * (0.35 + 0.65 * this.aimBlend);
+      const kick = pose.kick * 0.06;
+      this.rotateBoneWorld('spine_02', right, pitch * 0.45 + kick);
+      this.rotateBoneWorld('spine_03', right, pitch * 0.45);
+      this.rotateBoneWorld('Head', right, pitch * 0.1);
+    }
+    // Weapon offsets: swap dips the gun, kick pushes it back along the barrel
+    this.gunMount.rotation.x = -pose.swap * 1.2;
+    this.gunMount.position.z = pose.kick * 0.06;
   }
+
+  private upperW = new Map<string, number>();
+  private driveUpper(clip: string, scrub: number, dt: number, damp: (r: number) => number): void {
+    for (const [name, s] of this.slots) {
+      const target = name === clip ? 1 : 0;
+      let w = this.upperW.get(name) ?? 0;
+      w += (target - w) * damp(12);
+      if (w < 0.002) w = 0;
+      this.upperW.set(name, w);
+      if (name === clip) s.upperTime = scrub >= 0 ? scrub * s.clip.duration : wrap((s.upperTime ?? 0) + dt, s.clip.duration);
+      this.setW(s, 'upper', w * this.upperK);
+    }
+  }
+
+  private setW(s: Slot, layer: Layer, w: number): void {
+    const a = s.actions[layer]!;
+    if (w > 0.001) {
+      if (!a.enabled || !a.isRunning()) a.play();
+      a.enabled = true;
+      a.setEffectiveWeight(w);
+    } else if (a.enabled && a.isRunning()) {
+      a.stop();
+    }
+  }
+
+  private clipDur(name: string): number {
+    return this.slots.get(name)?.clip.duration ?? 1;
+  }
+
+  /** Rotates a bone about a world-space axis (post-mixer). */
+  private rotateBoneWorld(name: string, axisWorld: THREE.Vector3, angle: number): void {
+    const b = this.bones[name];
+    if (!b) return;
+    b.getWorldQuaternion(_q).invert();
+    const axisLocal = _v.copy(axisWorld).applyQuaternion(_q).normalize();
+    b.quaternion.multiply(_q2.setFromAxisAngle(axisLocal, angle));
+    b.updateMatrixWorld(true);
+  }
+}
+
+interface Slot {
+  upperTime?: number;
+}
+
+function wrap(t: number, d: number): number {
+  return ((t % d) + d) % d;
+}
+
+/** Tints the textured suit toward the raider palette (keeps texture detail by blending with white). */
+function tint(m: THREE.MeshStandardMaterial, pal: Palette): void {
+  const n = m.name.toLowerCase();
+  const white = new THREE.Color(1, 1, 1);
+  const pick = n.includes('torso') || n.includes('pants') ? [pal.suit, 0.6] : n.includes('helmet') ? [pal.accent, 0.35] : [pal.dark, 0.45];
+  m.color.copy(white).lerp(new THREE.Color(pick[0] as string).multiplyScalar(1.6), pick[1] as number);
 }
